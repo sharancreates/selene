@@ -1,0 +1,20 @@
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Outfit', sans-serif;
+  --font-handwriting: 'Caveat', cursive;
+  
+  --color-selene-beige: #e4ccb5;
+  --color-selene-brown: #865538;
+  --color-selene-brown-light: #9d6b49;
+  --color-selene-dark: #1c1a1a;
+  --color-selene-gray: #c9caca;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--color-selene-beige);
+  color: #333;
+}
