@@ -8,6 +8,8 @@ import Footer from './components/Footer';
 import Login from './components/Login';
 import Register from './components/Register';
 import Dashboard from './components/Dashboard';
+import CalendarView from './components/CalendarView';
+import Settings from './components/Settings';
 
 function App() {
   const getInitialView = () => {
@@ -15,6 +17,8 @@ function App() {
     if (path === '/login') return 'login';
     if (path === '/register') return 'register';
     if (path === '/dashboard') return 'dashboard';
+    if (path === '/calendar') return 'calendar';
+    if (path === '/settings') return 'settings';
     return 'landing';
   };
 
@@ -30,6 +34,10 @@ function App() {
         setViewInternal('register');
       } else if (path === '/dashboard') {
         setViewInternal('dashboard');
+      } else if (path === '/calendar') {
+        setViewInternal('calendar');
+      } else if (path === '/settings') {
+        setViewInternal('settings');
       } else {
         setViewInternal('landing');
       }
@@ -44,6 +52,8 @@ function App() {
     if (newView === 'login') path = '/login';
     else if (newView === 'register') path = '/register';
     else if (newView === 'dashboard') path = '/dashboard';
+    else if (newView === 'calendar') path = '/calendar';
+    else if (newView === 'settings') path = '/settings';
     
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
@@ -56,9 +66,11 @@ function App() {
     setView('dashboard');
   };
 
+  const isFullScreenView = view === 'dashboard' || view === 'calendar' || view === 'settings';
+
   return (
     <main className="w-full min-h-screen relative">
-      {view !== 'dashboard' && <Header currentView={view} setView={setView} />}
+      {!isFullScreenView && <Header currentView={view} setView={setView} />}
       
       {view === 'landing' ? (
         <>
@@ -72,6 +84,10 @@ function App() {
         <Login setView={setView} onLoginSuccess={handleLoginSuccess} />
       ) : view === 'register' ? (
         <Register setView={setView} onLoginSuccess={handleLoginSuccess} />
+      ) : view === 'calendar' ? (
+        <CalendarView username={username} setView={setView} />
+      ) : view === 'settings' ? (
+        <Settings username={username} setView={setView} />
       ) : (
         <Dashboard username={username} setView={setView} />
       )}

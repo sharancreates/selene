@@ -204,6 +204,19 @@ export default function Login({ setView, onLoginSuccess }) {
         </div>
       </motion.div>
 
+      {/* Footer */}
+      <div className="absolute bottom-0 left-0 w-full z-30">
+        <div className="w-full bg-[var(--color-selene-brown)] py-6 px-8 flex flex-col sm:flex-row justify-between items-center gap-3">
+          <span className="font-handwriting text-white text-xl tracking-wider">SELENE</span>
+          <div className="flex gap-6 font-handwriting text-white/80 text-lg">
+            <span className="hover:text-white cursor-pointer transition-colors">privacy manifesto</span>
+            <span className="hover:text-white cursor-pointer transition-colors">github</span>
+            <span className="hover:text-white cursor-pointer transition-colors">contact</span>
+          </div>
+          <span className="font-handwriting text-white/50 text-sm">© 2026 selene</span>
+        </div>
+      </div>
+
     </section>
   );
 }
