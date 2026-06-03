@@ -45,15 +45,226 @@ const phases = [
   }
 ];
 
-export default function Dashboard({ username = 'user', setView }) {
+export default function Dashboard({ username = 'user', setView, token, user, onLogout, selectedDate, setSelectedDate }) {
   const [activePhase, setActivePhase] = useState('menstrual');
+  const [allLogs, setAllLogs] = useState([]);
+  const [apiPrediction, setApiPrediction] = useState(null);
+  const [insights, setInsights] = useState([]);
+  const [bbtInput, setBbtInput] = useState('');
+
+  // Load daily log on selectedDate change
+  React.useEffect(() => {
+    const fetchDayLog = async () => {
+      if (!token || !selectedDate) return;
+      try {
+        const response = await fetch('/api/logs', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const data = await response.json();
+        if (response.ok && data.logs) {
+          setAllLogs(data.logs);
+          const logForDay = data.logs.find(l => l.log_date === selectedDate);
+          if (logForDay) {
+            setActivePhase(logForDay.phase || 'menstrual');
+            setBbtInput(logForDay.basal_body_temp !== null ? String(logForDay.basal_body_temp) : '');
+            const phaseStr = logForDay.phase || 'menstrual';
+            if (phaseStr === 'menstrual') {
+              setMenstrualSliders({
+                flow: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 50,
+                cramps: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 30,
+                energy: logForDay.energy_level !== null ? logForDay.energy_level : 40,
+                pain: logForDay.back_pain !== null ? logForDay.back_pain : 25
+              });
+              setMenstrualMoods(logForDay.mood_toggles || {});
+              setMenstrualSymptoms(logForDay.symptom_tags || {});
+              setMenstrualSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 60);
+              if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
+                setMenstrualMeds(logForDay.lifestyle_actions.meds);
+              }
+            } else if (phaseStr === 'follicular') {
+              setFollicularSliders({
+                focus: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 80,
+                strength: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 75,
+                energy: logForDay.energy_level !== null ? logForDay.energy_level : 80,
+                glow: logForDay.back_pain !== null ? logForDay.back_pain : 70
+              });
+              setFollicularMoods(logForDay.mood_toggles || {});
+              setFollicularSymptoms(logForDay.symptom_tags || {});
+              setFollicularSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 75);
+              if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
+                setFollicularMeds(logForDay.lifestyle_actions.meds);
+              }
+            } else if (phaseStr === 'ovulatory') {
+              setOvulatorySliders({
+                libido: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 80,
+                confidence: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 90,
+                social: logForDay.energy_level !== null ? logForDay.energy_level : 85,
+                bloating: logForDay.back_pain !== null ? logForDay.back_pain : 10
+              });
+              setOvulatoryMoods(logForDay.mood_toggles || {});
+              setOvulatorySymptoms(logForDay.symptom_tags || {});
+              setOvulatorySleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 70);
+              if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
+                setOvulatoryMeds(logForDay.lifestyle_actions.meds);
+              }
+            } else if (phaseStr === 'luteal') {
+              setLutealSliders({
+                bloating: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 45,
+                breastSensitivity: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 35,
+                anxiety: logForDay.energy_level !== null ? logForDay.energy_level : 50,
+                cravings: logForDay.back_pain !== null ? logForDay.back_pain : 60
+              });
+              setLutealMoods(logForDay.mood_toggles || {});
+              setLutealSymptoms(logForDay.symptom_tags || {});
+              setLutealSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 55);
+              if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
+                setLutealMeds(logForDay.lifestyle_actions.meds);
+              }
+            }
+          } else {
+            setBbtInput('');
+          }
+        }
+
+        const predResponse = await fetch(`/api/predict/next-cycle?date=${selectedDate}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (predResponse.ok) {
+          const predData = await predResponse.json();
+          if (predData && predData.prediction) {
+            setApiPrediction(predData.prediction);
+          }
+        }
+
+        const insResponse = await fetch('/api/predict/insights', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (insResponse.ok) {
+          const insData = await insResponse.json();
+          if (insData && insData.insights) {
+            setInsights(insData.insights);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load daily log", e);
+      }
+    };
+    fetchDayLog();
+  }, [selectedDate, token]);
+
+
+
+  const handleSaveLog = async () => {
+    if (!token) {
+      alert("Please login first to save your data.");
+      return;
+    }
+    
+    let payload = {
+      log_date: selectedDate,
+      phase: activePhase,
+      basal_body_temp: bbtInput !== '' ? parseFloat(bbtInput) : null
+    };
+    
+    if (activePhase === 'menstrual') {
+      payload.flow_intensity = menstrualSliders.flow;
+      payload.pelvic_pain = menstrualSliders.cramps;
+      payload.energy_level = menstrualSliders.energy;
+      payload.back_pain = menstrualSliders.pain;
+      payload.sleep_quality = menstrualSleep;
+      payload.mood_toggles = menstrualMoods;
+      payload.symptom_tags = menstrualSymptoms;
+      payload.lifestyle_actions = { meds: menstrualMeds };
+    } else if (activePhase === 'follicular') {
+      payload.flow_intensity = follicularSliders.focus;
+      payload.pelvic_pain = follicularSliders.strength;
+      payload.energy_level = follicularSliders.energy;
+      payload.back_pain = follicularSliders.glow;
+      payload.sleep_quality = follicularSleep;
+      payload.mood_toggles = follicularMoods;
+      payload.symptom_tags = follicularSymptoms;
+      payload.lifestyle_actions = { meds: follicularMeds };
+    } else if (activePhase === 'ovulatory') {
+      payload.flow_intensity = ovulatorySliders.libido;
+      payload.pelvic_pain = ovulatorySliders.confidence;
+      payload.energy_level = ovulatorySliders.social;
+      payload.back_pain = ovulatorySliders.bloating;
+      payload.sleep_quality = ovulatorySleep;
+      payload.mood_toggles = ovulatoryMoods;
+      payload.symptom_tags = ovulatorySymptoms;
+      payload.lifestyle_actions = { meds: ovulatoryMeds };
+    } else if (activePhase === 'luteal') {
+      payload.flow_intensity = lutealSliders.bloating;
+      payload.pelvic_pain = lutealSliders.breastSensitivity;
+      payload.energy_level = lutealSliders.anxiety;
+      payload.back_pain = lutealSliders.cravings;
+      payload.sleep_quality = lutealSleep;
+      payload.mood_toggles = lutealMoods;
+      payload.symptom_tags = lutealSymptoms;
+      payload.lifestyle_actions = { meds: lutealMeds };
+    }
+    
+    try {
+      const response = await fetch('/api/logs/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (response.ok) {
+        alert("Daily symptoms saved successfully!");
+        // Re-fetch all logs to update BBT chart and predictions
+        const responseLogs = await fetch('/api/logs', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (responseLogs.ok) {
+          const logsData = await responseLogs.json();
+          if (logsData.logs) {
+            setAllLogs(logsData.logs);
+          }
+        }
+        const predResponse = await fetch(`/api/predict/next-cycle?date=${selectedDate}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (predResponse.ok) {
+          const predData = await predResponse.json();
+          if (predData.prediction) {
+            setApiPrediction(predData.prediction);
+          }
+        }
+        const insResponse = await fetch('/api/predict/insights', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (insResponse.ok) {
+          const insData = await insResponse.json();
+          if (insData && insData.insights) {
+            setInsights(insData.insights);
+          }
+        }
+      } else {
+        alert(data.error || "Failed to save symptoms.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Network error. Could not connect to the database.");
+    }
+  };
+
 
   // 1. Menstrual States
   const [menstrualSliders, setMenstrualSliders] = useState({ flow: 50, cramps: 30, energy: 40, pain: 25 });
   const [menstrualMoods, setMenstrualMoods] = useState({ brainFog: false, anxious: false, irritable: false, sensitive: false, calm: true });
   const [menstrualSymptoms, setMenstrualSymptoms] = useState({ sugarCravings: false, energyCrash: false, cysticAcne: false, hairShedding: false });
   const [menstrualMeds, setMenstrualMeds] = useState([false, false, false]);
-  const [menstrualBbt, setMenstrualBbt] = useState('');
   const [menstrualSleep, setMenstrualSleep] = useState(60);
 
   // 2. Follicular States
@@ -109,6 +320,138 @@ export default function Dashboard({ username = 'user', setView }) {
     if (activePhase === 'luteal') setLutealMeds(update);
   };
 
+  // Slices logs to isolate entries for the current active menstrual cycle
+  const getCurrentCycleLogs = () => {
+    if (!allLogs || allLogs.length === 0) return [];
+    
+    // Sort logs chronologically
+    const sortedLogs = [...allLogs].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+    
+    // Find active date index
+    const selectedIdx = sortedLogs.findIndex(l => l.log_date === selectedDate);
+    if (selectedIdx === -1) {
+      // Date is not logged yet, find logs up to selectedDate
+      const logsBefore = sortedLogs.filter(l => new Date(l.log_date) <= new Date(selectedDate));
+      if (logsBefore.length === 0) return [];
+      
+      let startIdx = -1;
+      for (let i = logsBefore.length - 1; i >= 0; i--) {
+        if (logsBefore[i].phase === 'menstrual') {
+          let j = i;
+          while (j >= 0 && logsBefore[j].phase === 'menstrual') {
+            j--;
+          }
+          startIdx = j + 1;
+          break;
+        }
+      }
+      if (startIdx === -1) return logsBefore.slice(-15);
+      return logsBefore.slice(startIdx);
+    }
+    
+    // Find last menstrual start relative to selection
+    let startIdx = -1;
+    for (let i = selectedIdx; i >= 0; i--) {
+      if (sortedLogs[i].phase === 'menstrual') {
+        let j = i;
+        while (j >= 0 && sortedLogs[j].phase === 'menstrual') {
+          j--;
+        }
+        startIdx = j + 1;
+        break;
+      }
+    }
+    
+    if (startIdx === -1) {
+      return sortedLogs.slice(0, selectedIdx + 1).slice(-30);
+    }
+    
+    let endIdx = sortedLogs.length;
+    for (let i = startIdx + 1; i < sortedLogs.length; i++) {
+      if (sortedLogs[i].phase === 'menstrual' && sortedLogs[i - 1].phase !== 'menstrual') {
+        if (new Date(sortedLogs[i].log_date) > new Date(sortedLogs[startIdx].log_date).getTime() + 10 * 24 * 60 * 60 * 1000) {
+          endIdx = i;
+          break;
+        }
+      }
+    }
+    
+    return sortedLogs.slice(startIdx, endIdx);
+  };
+
+  const cycleLogs = getCurrentCycleLogs();
+  
+  // Format BBT logs for chart plot coords
+  const bbtData = cycleLogs
+    .map(log => {
+      const temp = log.basal_body_temp;
+      if (temp === null || temp === undefined) return null;
+      
+      const startMs = new Date(cycleLogs[0].log_date).getTime();
+      const currentMs = new Date(log.log_date).getTime();
+      const dayOfCycle = Math.floor((currentMs - startMs) / (24 * 60 * 60 * 1000)) + 1;
+      
+      return {
+        dateStr: log.log_date,
+        dayOfCycle,
+        temp: parseFloat(temp)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.dayOfCycle - b.dayOfCycle);
+
+  const getX = (day) => {
+    const minX = 1;
+    const maxX = bbtData.length > 0 ? Math.max(28, ...bbtData.map(d => d.dayOfCycle)) : 28;
+    return 45 + ((day - minX) / (maxX - minX)) * (500 - 45 - 20);
+  };
+
+  const getY = (temp) => {
+    const temps = bbtData.map(d => d.temp);
+    const minT = bbtData.length > 0 ? Math.min(97.0, ...temps) - 0.2 : 96.8;
+    const maxT = bbtData.length > 0 ? Math.max(99.0, ...temps) + 0.2 : 99.2;
+    return 165 - ((temp - minT) / (maxT - minT)) * (165 - 20); // y range from 20 to 165
+  };
+
+  // PMDD Luteal Phase transition warnings (48h crash warning)
+  const isLutealCrashIncoming = user?.has_pmdd && apiPrediction && 
+    apiPrediction.estimated_phase === 'ovulatory' && 
+    apiPrediction.days_until_period >= 14 && 
+    apiPrediction.days_until_period <= 16;
+
+  // PCOS / Endo Menorrhagia alerts (consecutive bleeding days)
+  const getConsecutiveBleedingDays = () => {
+    if (!allLogs || allLogs.length === 0) return 0;
+    const sortedLogs = [...allLogs].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+    const selectedIdx = sortedLogs.findIndex(l => l.log_date === selectedDate);
+    if (selectedIdx === -1) {
+      if (activePhase !== 'menstrual') return 0;
+      const logsBefore = sortedLogs.filter(l => new Date(l.log_date) < new Date(selectedDate));
+      let count = 1;
+      for (let i = logsBefore.length - 1; i >= 0; i--) {
+        if (logsBefore[i].phase === 'menstrual') {
+          count++;
+        } else {
+          break;
+        }
+      }
+      return count;
+    }
+    
+    let count = 0;
+    for (let i = selectedIdx; i >= 0; i--) {
+      if (sortedLogs[i].phase === 'menstrual') {
+        count++;
+      } else {
+        break;
+      }
+    }
+    return count;
+  };
+
+  const bleedingDays = getConsecutiveBleedingDays();
+  const isMenorrhagiaDetected = (user?.has_pcos || user?.has_endo) && bleedingDays >= 10;
+
   return (
     <motion.div 
       className="w-full min-h-screen flex flex-col font-sans transition-colors duration-500"
@@ -134,15 +477,27 @@ export default function Dashboard({ username = 'user', setView }) {
             Hellove, {username}
           </h1>
           <p className="font-handwriting text-xl sm:text-2.5xl opacity-90 mt-1">
-            28/05/2026
+            {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
           </p>
         </div>
 
         {/* Right: Log Out / Switcher info */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-wrap justify-end">
           <span className="text-xs font-bold uppercase tracking-wider bg-black/10 px-2.5 py-1 rounded-md hidden lg:inline-block">
             {currentPhaseConfig.name} Phase
           </span>
+          <button
+            onClick={handleSaveLog}
+            className="border-2 border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1 rounded-full transition-all duration-300 cursor-pointer focus:outline-none bg-white/20 hover:shadow-sm"
+          >
+            Save Log
+          </button>
+          <button
+            onClick={() => setView('calendar')}
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+          >
+            Calendar
+          </button>
           <button
             onClick={() => setView('settings')}
             className="w-10 h-10 rounded-full bg-black/10 hover:bg-black/20 flex items-center justify-center transition-colors cursor-pointer focus:outline-none"
@@ -154,8 +509,8 @@ export default function Dashboard({ username = 'user', setView }) {
             </svg>
           </button>
           <button
-            onClick={() => setView('landing')}
-            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-6 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+            onClick={onLogout}
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
           >
             Log Out
           </button>
@@ -235,7 +590,7 @@ export default function Dashboard({ username = 'user', setView }) {
                     className="font-handwriting text-2xl sm:text-3xl font-bold transition-colors duration-500"
                     style={{ color: currentPhaseConfig.color }}
                   >
-                    MAY 2026
+                    {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }).toUpperCase()}
                   </span>
                   <div className="flex items-center gap-2">
                     <span className="font-sans text-xs tracking-widest uppercase text-white/50">{currentPhaseConfig.name} Window</span>
@@ -258,7 +613,8 @@ export default function Dashboard({ username = 'user', setView }) {
                   {Array.from({ length: 31 }).map((_, i) => {
                     const day = i + 1;
                     const isHighlight = currentPhaseConfig.calendarHighlight.includes(day);
-                    const isToday = day === 28;
+                    const targetDate = new Date(selectedDate + 'T00:00:00');
+                    const isSelectedDay = day === targetDate.getDate();
 
                     return (
                       <div key={day} className="relative flex items-center justify-center h-8 w-8 mx-auto">
@@ -275,7 +631,7 @@ export default function Dashboard({ username = 'user', setView }) {
                             </svg>
                           </motion.div>
                         )}
-                        {isToday && (
+                        {isSelectedDay && (
                           <div 
                             className="absolute inset-0 border-2 border-dashed rounded-xl"
                             style={{ borderColor: currentPhaseConfig.color }}
@@ -302,11 +658,16 @@ export default function Dashboard({ username = 'user', setView }) {
               >
                 <div className="text-center">
                   <h3 className="font-handwriting text-4xl sm:text-5xl font-black italic tracking-wide mb-2">
-                    predictions
+                    predictions & insights
                   </h3>
                   <p className="font-handwriting text-xl sm:text-2xl text-black/80 max-w-lg mx-auto">
-                    {currentPhaseConfig.prediction}
+                    {apiPrediction ? apiPrediction.insight : currentPhaseConfig.prediction}
                   </p>
+                  {apiPrediction && apiPrediction.next_period_date && (
+                    <p className="font-handwriting text-lg text-black/60 mt-3 font-semibold">
+                      next expected period: {new Date(apiPrediction.next_period_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })} ({apiPrediction.days_until_period} days remaining)
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -323,6 +684,82 @@ export default function Dashboard({ username = 'user', setView }) {
               </div>
 
             </div>
+
+            <hr className="border-black/5" />
+
+            {/* Rule-Based Insights Section */}
+            {insights && insights.length > 0 && (
+              <div className="bg-white/40 backdrop-blur-sm rounded-[3rem] p-8 border border-black/5 shadow-md flex flex-col gap-6">
+                <h2 className="font-handwriting text-3xl text-black font-black text-center sm:text-left">
+                  hormonal pattern insights
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {insights.map((insight, idx) => {
+                    const bgColors = {
+                      cycle: 'bg-[#fff3e0]/70 border-[#ffe0b2]',
+                      mood: 'bg-[#f3e5f5]/70 border-[#e1bee7]',
+                      pain: 'bg-[#ffebee]/70 border-[#ffcdd2]',
+                      condition: 'bg-[#fff8e1]/70 border-[#ffecb3]',
+                      trend: 'bg-[#e3f2fd]/70 border-[#bbdefb]'
+                    };
+                    const textColors = {
+                      cycle: 'text-[#e65100]',
+                      mood: 'text-[#4a148c]',
+                      pain: 'text-[#b71c1c]',
+                      condition: 'text-[#ff6f00]',
+                      trend: 'text-[#0d47a1]'
+                    };
+                    const categoryBg = bgColors[insight.category] || 'bg-white/60 border-black/10';
+                    const categoryText = textColors[insight.category] || 'text-black';
+
+                    return (
+                      <motion.div
+                        key={idx}
+                        whileHover={{ y: -4 }}
+                        className={`rounded-3xl p-6 border flex flex-col justify-between shadow-sm transition-all duration-300 ${categoryBg}`}
+                      >
+                        <div>
+                          <div className="flex justify-between items-start mb-3">
+                            <span className={`text-[10px] font-sans font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/80 border border-black/5 shadow-sm ${categoryText}`}>
+                              {insight.category} • {insight.confidence} confidence
+                            </span>
+                          </div>
+                          <h4 className="font-handwriting text-2xl font-bold text-black mb-2">
+                            {insight.title}
+                          </h4>
+                          <p className="font-sans text-sm text-black/70 leading-relaxed mb-4">
+                            {insight.message}
+                          </p>
+                        </div>
+                        
+                        {/* Expandable Explanation */}
+                        <div className="mt-2 border-t border-black/5 pt-4">
+                          <details className="group cursor-pointer">
+                            <summary className="font-sans text-xs font-bold text-black/60 flex items-center justify-between focus:outline-none select-none">
+                              <span>clinical explanation</span>
+                              <svg viewBox="0 0 24 24" className="w-4 h-4 transform group-open:rotate-180 transition-transform duration-200" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </summary>
+                            <div className="mt-3 font-sans text-xs text-black/60 leading-normal flex flex-col gap-2">
+                              <p className="italic">"{insight.explanation}"</p>
+                              {insight.supporting_data && Object.keys(insight.supporting_data).length > 0 && (
+                                <div className="bg-white/50 rounded-xl p-3 mt-1 border border-black/5">
+                                  <div className="font-semibold text-black/70 mb-1">extracted markers:</div>
+                                  <pre className="font-mono text-[10px] text-black/50 overflow-x-auto">
+                                    {JSON.stringify(insight.supporting_data, null, 2)}
+                                  </pre>
+                                </div>
+                              )}
+                            </div>
+                          </details>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <hr className="border-black/5" />
 
@@ -561,8 +998,8 @@ export default function Dashboard({ username = 'user', setView }) {
                       <input
                         type="text"
                         placeholder="e.g. 97.8°F"
-                        value={menstrualBbt}
-                        onChange={(e) => setMenstrualBbt(e.target.value)}
+                        value={bbtInput}
+                        onChange={(e) => setBbtInput(e.target.value)}
                         className="placeholder-black/50 text-black font-handwriting text-2xl px-4 py-1.5 rounded-2xl w-full sm:w-44 focus:outline-none border border-black/10 focus:bg-white transition-colors duration-200 text-center shadow-sm"
                         style={{ backgroundColor: currentPhaseConfig.color }}
                       />
@@ -619,12 +1056,12 @@ export default function Dashboard({ username = 'user', setView }) {
                           <span className="font-handwriting text-black text-2xl">
                             1. Basal Body Temperature?
                           </span>
-                          {menstrualBbt ? (
+                          {bbtInput ? (
                             <span 
                               className="font-handwriting text-[#1e2722] text-2xl font-bold px-3 py-0.5 rounded-xl transition-colors duration-500"
                               style={{ backgroundColor: currentPhaseConfig.color }}
                             >
-                              {menstrualBbt}
+                              {bbtInput}
                             </span>
                           ) : (
                             <span className="font-handwriting text-black/40 text-xl italic">(not logged)</span>
@@ -714,8 +1151,204 @@ export default function Dashboard({ username = 'user', setView }) {
               </div>
             </div>
 
+            {/* Save Log Button at the bottom */}
+            <div className="flex justify-center pt-8 pb-4">
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleSaveLog}
+                className="bg-[#1e2722] text-white hover:bg-[#2a3830] font-handwriting text-3xl px-12 py-3.5 rounded-full shadow-2xl transition-all duration-300 cursor-pointer focus:outline-none font-bold"
+              >
+                Save Symptom Log
+              </motion.button>
+            </div>
+
           </motion.div>
         </AnimatePresence>
+
+        {/* Universal Cycle Vitals & BBT Trends Section */}
+        <div className="flex flex-col gap-10">
+          
+          {/* Alerts & Warnings Panel */}
+          {(isLutealCrashIncoming || isMenorrhagiaDetected) && (
+            <div className="flex flex-col gap-4">
+              
+              {/* PMDD Luteal Transition Warning */}
+              {isLutealCrashIncoming && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-[#df9b6d]/20 border border-[#df9b6d] rounded-[2rem] p-6 sm:p-8 flex gap-5 items-start shadow-md text-black animate-fade-in"
+                >
+                  <div className="p-3 bg-[#df9b6d] rounded-full text-white mt-1 shrink-0">
+                    <svg viewBox="0 0 24 24" className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <h4 className="font-handwriting text-3xl font-black uppercase tracking-wide">
+                      PMDD Luteal Phase Transition Alert (Expected in ~48 hours)
+                    </h4>
+                    <p className="font-handwriting text-2xl text-black/85 leading-snug">
+                      Progesterone shifts will begin in approximately 48 hours. For users tracking PMDD, this transition (the luteal drop) can cause sudden changes in neuro-steroid activity, bringing on feelings of anxiety, fatigue, or mood shifts. Establish gentle boundaries, stock up on comfort foods, and prioritize emotional buffer time.
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* PCOS/Endo Prolonged Bleeding (Menorrhagia) Warning */}
+              {isMenorrhagiaDetected && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-red-500/10 border border-red-500 rounded-[2rem] p-6 sm:p-8 flex gap-5 items-start shadow-md text-black animate-fade-in"
+                >
+                  <div className="p-3 bg-red-500 rounded-full text-white mt-1 shrink-0">
+                    <svg viewBox="0 0 24 24" className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <h4 className="font-handwriting text-3xl font-black uppercase tracking-wide text-red-600">
+                      Prolonged Bleeding Warning (Menorrhagia detected)
+                    </h4>
+                    <p className="font-handwriting text-2xl text-black/85 leading-snug">
+                      You have logged menstrual flow for {bleedingDays} consecutive days. For individuals managing PCOS or Endometriosis, prolonged bleeding can cause iron deficiency anemia and physical exhaustion. Consider tracking flow volume closely and consulting your primary care provider if bleeding continues.
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+
+            </div>
+          )}
+
+          {/* Vitals Input & BBT Trend Chart */}
+          <div className="bg-white/40 backdrop-blur-md rounded-[3.5rem] p-8 sm:p-10 border border-black/5 shadow-md grid grid-cols-1 md:grid-cols-12 gap-10 items-start">
+            
+            {/* Left Column: Waking Vitals Log Form */}
+            <div className="md:col-span-4 flex flex-col gap-6">
+              <div>
+                <h3 className="font-handwriting text-black text-4xl font-black uppercase tracking-wide leading-none mb-2">
+                  waking vitals
+                </h3>
+                <p className="font-handwriting text-black/60 text-xl leading-snug">
+                  Log your basal body temperature (BBT) daily to track cycle transitions.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <label className="font-handwriting text-black text-2.5xl font-bold select-none">
+                  Waking Temp:
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    placeholder="e.g. 97.8"
+                    value={bbtInput}
+                    onChange={(e) => setBbtInput(e.target.value)}
+                    className="placeholder-black/40 text-black font-handwriting text-2.5xl px-4 py-2.5 rounded-2xl w-full focus:outline-none border border-black/10 focus:bg-white transition-colors duration-200 text-center shadow-inner bg-white/50"
+                  />
+                  <span className="font-handwriting text-black text-4.5xl font-black select-none">
+                    °F
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-black/5 rounded-2xl p-4 flex flex-col gap-1.5 border border-black/5">
+                <span className="font-handwriting text-black/70 text-lg font-bold">
+                  Clinical Tips:
+                </span>
+                <p className="font-handwriting text-black/60 text-lg leading-tight">
+                  • Measure immediately upon waking, before getting out of bed.
+                </p>
+                <p className="font-handwriting text-black/60 text-lg leading-tight">
+                  • A sustained temperature rise of 0.5°F - 1.0°F confirms successful ovulation.
+                </p>
+              </div>
+            </div>
+
+            {/* Right Column: Basal Temperature Trend Chart */}
+            <div className="md:col-span-8 flex flex-col gap-4 w-full">
+              <div>
+                <h3 className="font-handwriting text-black text-4xl font-black uppercase tracking-wide leading-none mb-1">
+                  basal body temp trend
+                </h3>
+                <p className="font-handwriting text-black/60 text-xl">
+                  Cycle Days (D) vs Waking Temperature (°F)
+                </p>
+              </div>
+
+              <div className="w-full bg-white/70 border border-black/10 rounded-[2.5rem] p-6 shadow-inner relative min-h-[240px] flex items-center justify-center">
+                <svg viewBox="0 0 500 200" className="w-full h-full overflow-visible">
+                  
+                  {/* Grid Lines & Y ticks */}
+                  {yTicks.map((tick, idx) => (
+                    <g key={idx}>
+                      <line x1={45} y1={getY(tick)} x2={480} y2={getY(tick)} stroke="rgba(0,0,0,0.07)" strokeDasharray="3,3" />
+                      <text x={12} y={getY(tick) + 4} className="font-sans text-[10px] font-bold fill-black/40">{tick.toFixed(1)}°</text>
+                    </g>
+                  ))}
+
+                  {/* X Axis ticks */}
+                  {xTicks.map((tick, idx) => (
+                    <g key={idx}>
+                      <line x1={getX(tick)} y1={20} x2={getX(tick)} y2={165} stroke="rgba(0,0,0,0.03)" />
+                      <text x={getX(tick)} y={185} textAnchor="middle" className="font-sans text-[10px] font-bold fill-black/40">D{tick}</text>
+                    </g>
+                  ))}
+
+                  {/* Biphasic Shift Baseline (dashed red line) */}
+                  <line x1={45} y1={getY(97.8)} x2={480} y2={getY(97.8)} stroke="rgba(220,38,38,0.25)" strokeWidth={1.5} strokeDasharray="4,4" />
+                  <text x={330} y={getY(97.8) - 4} className="font-handwriting text-lg fill-red-500/70 font-semibold">luteal shift baseline (97.8°F)</text>
+
+                  {/* Connected Temperature Trend Line */}
+                  {bbtData.length > 1 && (
+                    <path
+                      d={bbtData.map((d, idx) => `${idx === 0 ? 'M' : 'L'} ${getX(d.dayOfCycle)} ${getY(d.temp)}`).join(' ')}
+                      fill="none"
+                      stroke="var(--color-selene-brown)"
+                      strokeWidth={3}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+
+                  {/* Temperature Data Dots */}
+                  {bbtData.map((d, idx) => (
+                    <g key={idx} className="group/dot cursor-pointer">
+                      <circle
+                        cx={getX(d.dayOfCycle)}
+                        cy={getY(d.temp)}
+                        r={4.5}
+                        fill="#1e2722"
+                        stroke="white"
+                        strokeWidth={2}
+                      />
+                      <title>{`Day ${d.dayOfCycle}: ${d.temp}°F (${new Date(d.dateStr).toLocaleDateString('en-GB', {day: 'numeric', month: 'short'})})`}</title>
+                    </g>
+                  ))}
+
+                  {/* Empty state overlay inside SVG if no logs exist */}
+                  {bbtData.length === 0 && (
+                    <foreignObject x={45} y={20} width={435} height={145}>
+                      <div className="w-full h-full flex flex-col items-center justify-center text-center p-4">
+                        <p className="font-handwriting text-black/60 text-2xl font-bold leading-tight">
+                          No Basal Body Temperature logs found for this cycle.
+                        </p>
+                        <p className="font-handwriting text-black/40 text-lg italic mt-1 leading-snug">
+                          Record waking temp daily to visualize the biphasic shift indicating ovulation.
+                        </p>
+                      </div>
+                    </foreignObject>
+                  )}
+                  
+                </svg>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
 
       </div>
 

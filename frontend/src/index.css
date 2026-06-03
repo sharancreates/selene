@@ -17,3 +17,8 @@ body {
   background-color: var(--color-selene-beige);
   color: #333;
 }
+
+body.readable-typography {
+  --font-handwriting: 'Outfit', sans-serif !important;
+}
+

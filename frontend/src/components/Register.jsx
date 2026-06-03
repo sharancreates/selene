@@ -5,6 +5,7 @@ export default function Register({ setView, onLoginSuccess }) {
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  const [error, setError] = useState('');
   
   // Selected conditions
   const [conditions, setConditions] = useState({
@@ -22,15 +23,56 @@ export default function Register({ setView, onLoginSuccess }) {
     }));
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const validateForm = () => {
+    if (!username.trim()) {
+      setError('Username is required');
+      return false;
+    }
+    if (pin.length < 6) {
+      setError('PIN must be at least 6 characters');
+      return false;
+    }
     if (pin !== confirmPin) {
-      alert("PINs do not match!");
+      setError('PINs do not match!');
+      return false;
+    }
+    return true;
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    
+    if (!validateForm()) {
       return;
     }
-    console.log('Registering with:', { username, pin, conditions, camouflageMode });
-    if (onLoginSuccess) {
-      onLoginSuccess(username);
+    
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          username,
+          pin,
+          cycle_length_baseline: 28,
+          period_length_baseline: 5,
+          has_pcos: conditions.pcos,
+          has_pmdd: conditions.pmdd,
+          has_endo: conditions.endo
+        })
+      });
+      
+      const data = await response.json();
+      if (response.ok) {
+        if (onLoginSuccess) {
+          onLoginSuccess(data.user.username, data.token, data.user);
+        }
+      } else {
+        setError(data.error || 'Registration failed');
+      }
+    } catch (err) {
+      setError('Network error. Please try again.');
     }
   };
 
@@ -137,14 +179,19 @@ export default function Register({ setView, onLoginSuccess }) {
             </svg>
           </motion.div>
 
-          {/* Registration Card */}
-          <motion.div 
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.2, type: "spring", stiffness: 60 }}
-            className="relative z-20 w-[310px] sm:w-[360px] bg-[#df9b6d] rounded-[2.5rem] p-8 sm:p-10 shadow-2xl border border-white/10 flex flex-col justify-between"
-          >
-            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+{/* Registration Card */}
+           <motion.div 
+             initial={{ opacity: 0, y: 30 }}
+             animate={{ opacity: 1, y: 0 }}
+             transition={{ duration: 0.8, delay: 0.2, type: "spring", stiffness: 60 }}
+             className="relative z-20 w-[310px] sm:w-[360px] bg-[#df9b6d] rounded-[2.5rem] p-8 sm:p-10 shadow-2xl border border-white/10 flex flex-col justify-between"
+           >
+             {error && (
+               <div className="absolute -top-12 left-0 right-0 bg-red-500 text-white font-handwriting text-lg px-4 py-2 rounded-xl text-center">
+                 {error}
+               </div>
+             )}
+             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
               
               <h3 className="font-handwriting text-black text-center text-4xl sm:text-5xl tracking-wide mb-1 uppercase font-bold">
                 REGISTER

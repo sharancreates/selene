@@ -1,23 +1,48 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 
-export default function Settings({ username = 'user', setView }) {
+export default function Settings({ username = 'user', setView, token, user, setUser, onLogout }) {
   // Profile
-  const [displayName, setDisplayName] = useState(username);
-  const [cycleLength, setCycleLength] = useState(28);
-  const [periodLength, setPeriodLength] = useState(5);
+  const [displayName, setDisplayName] = useState(user?.username || username);
+  const [cycleLength, setCycleLength] = useState(user?.cycle_length_baseline || 28);
+  const [periodLength, setPeriodLength] = useState(user?.period_length_baseline || 5);
   
   // Conditions
   const [conditions, setConditions] = useState({
-    pcos: false,
-    pmdd: false,
-    endo: false,
+    pcos: user?.has_pcos || false,
+    pmdd: user?.has_pmdd || false,
+    endo: user?.has_endo || false,
   });
 
+  // Sync state if user prop changes
+  useEffect(() => {
+    if (user) {
+      setDisplayName(user.username);
+      setCycleLength(user.cycle_length_baseline);
+      setPeriodLength(user.period_length_baseline);
+      setConditions({
+        pcos: user.has_pcos,
+        pmdd: user.has_pmdd,
+        endo: user.has_endo,
+      });
+    }
+  }, [user]);
+
   // Preferences
-  const [camouflageMode, setCamouflageMode] = useState(false);
-  const [notifications, setNotifications] = useState(true);
-  const [darkCalendar, setDarkCalendar] = useState(true);
+  const [camouflageMode, setCamouflageMode] = useState(() => {
+    return localStorage.getItem('selene_camouflage_mode') === 'true';
+  });
+  const [notifications, setNotifications] = useState(() => {
+    const saved = localStorage.getItem('selene_notifications');
+    return saved === null ? true : saved === 'true';
+  });
+  const [darkCalendar, setDarkCalendar] = useState(() => {
+    const saved = localStorage.getItem('selene_dark_calendar');
+    return saved === null ? true : saved === 'true';
+  });
+  const [readableFont, setReadableFont] = useState(() => {
+    return localStorage.getItem('selene_readable_font') === 'true';
+  });
 
   // Data
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -26,16 +51,98 @@ export default function Settings({ username = 'user', setView }) {
     setConditions(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleSave = () => {
-    // Save logic placeholder
-    alert('Settings saved successfully! ✨');
+  const handleToggleReadableFont = () => {
+    const newVal = !readableFont;
+    setReadableFont(newVal);
+    localStorage.setItem('selene_readable_font', String(newVal));
+    if (newVal) {
+      document.body.classList.add('readable-typography');
+    } else {
+      document.body.classList.remove('readable-typography');
+    }
   };
 
-  const handleDeleteData = () => {
+  const handleToggleCamouflage = () => {
+    const newVal = !camouflageMode;
+    setCamouflageMode(newVal);
+    localStorage.setItem('selene_camouflage_mode', String(newVal));
+  };
+
+  const handleToggleNotifications = () => {
+    const newVal = !notifications;
+    setNotifications(newVal);
+    localStorage.setItem('selene_notifications', String(newVal));
+  };
+
+  const handleToggleDarkCalendar = () => {
+    const newVal = !darkCalendar;
+    setDarkCalendar(newVal);
+    localStorage.setItem('selene_dark_calendar', String(newVal));
+  };
+
+
+  const handleSave = async () => {
+    if (!token) {
+      alert("Please log in to save settings.");
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/auth/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          cycle_length_baseline: cycleLength,
+          period_length_baseline: periodLength,
+          has_pcos: conditions.pcos,
+          has_pmdd: conditions.pmdd,
+          has_endo: conditions.endo
+        })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        alert('Settings saved successfully! ✨');
+        if (setUser && data.user) {
+          setUser(data.user);
+          localStorage.setItem('selene_user', JSON.stringify(data.user));
+        }
+      } else {
+        alert(data.error || 'Failed to save settings.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Network error. Failed to save settings.');
+    }
+  };
+
+  const handleDeleteData = async () => {
     if (showDeleteConfirm) {
-      // Delete logic placeholder
-      alert('All local data has been erased.');
-      setShowDeleteConfirm(false);
+      if (!token) {
+        alert("Please log in first.");
+        return;
+      }
+      try {
+        const response = await fetch('/api/auth/account', {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const data = await response.json();
+        if (response.ok) {
+          alert('Your account and all associated data have been permanently erased.');
+          setShowDeleteConfirm(false);
+          onLogout();
+        } else {
+          alert(data.error || 'Failed to delete account.');
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Network error. Failed to erase account.');
+      }
     } else {
       setShowDeleteConfirm(true);
     }
@@ -69,12 +176,18 @@ export default function Settings({ username = 'user', setView }) {
           <p className="font-handwriting text-lg opacity-70 mt-1">customize your selene experience</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4 flex-wrap justify-end">
           <button
             onClick={() => setView('dashboard')}
-            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-6 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
           >
             ← Dashboard
+          </button>
+          <button
+            onClick={onLogout}
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+          >
+            Log Out
           </button>
         </div>
       </motion.div>
@@ -214,19 +327,25 @@ export default function Settings({ username = 'user', setView }) {
               label="Camouflage Mode"
               desc="Disguise Selene as a calculator"
               checked={camouflageMode}
-              onChange={() => setCamouflageMode(!camouflageMode)}
+              onChange={handleToggleCamouflage}
             />
             <SettingsToggle
               label="Phase Reminders"
               desc="Get gentle nudges about phase transitions"
               checked={notifications}
-              onChange={() => setNotifications(!notifications)}
+              onChange={handleToggleNotifications}
             />
             <SettingsToggle
               label="Dark Calendar"
               desc="Use dark theme for calendar views"
               checked={darkCalendar}
-              onChange={() => setDarkCalendar(!darkCalendar)}
+              onChange={handleToggleDarkCalendar}
+            />
+            <SettingsToggle
+              label="High Readability Typography"
+              desc="Dyslexia Friendly Font (Outfit sans-serif)"
+              checked={readableFont}
+              onChange={handleToggleReadableFont}
             />
           </div>
         </motion.div>

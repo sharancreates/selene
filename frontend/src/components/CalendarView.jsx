@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const phases = [
@@ -42,28 +42,44 @@ function getPhaseForDay(day) {
   return null;
 }
 
-function MonthCalendar({ year, month, today }) {
+function MonthCalendar({ year, month, today, logs, onDayClick, darkCalendar }) {
   const daysInMonth = getDaysInMonth(year, month);
   const firstDay = getFirstDayOfMonth(year, month);
   const isCurrentMonth = today && today.year === year && today.month === month;
+
+  // Build a fast lookup map for logs of this month
+  const logMap = {};
+  if (Array.isArray(logs)) {
+    logs.forEach(log => {
+      logMap[log.log_date] = log;
+    });
+  }
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4 }}
-      className="bg-[#1e2722] rounded-[2.5rem] p-6 sm:p-8 shadow-2xl border border-white/5"
+      className={`rounded-[2.5rem] p-6 sm:p-8 shadow-2xl border transition-colors duration-300 ${
+        darkCalendar 
+          ? "bg-[#1e2722] text-white border-white/5" 
+          : "bg-white/80 text-black border-black/5"
+      }`}
     >
       {/* Month Header */}
       <div className="flex justify-between items-center mb-5">
-        <span className="font-handwriting text-2xl sm:text-3xl font-bold text-[#df9b6d]">
+        <span className={`font-handwriting text-2xl sm:text-3xl font-bold ${
+          darkCalendar ? "text-[#df9b6d]" : "text-[var(--color-selene-brown)]"
+        }`}>
           {monthNames[month]} {year}
         </span>
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 font-sans">
           {phases.map(p => (
             <div key={p.id} className="flex items-center gap-1">
               <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }} />
-              <span className="text-[10px] text-white/40 font-sans hidden sm:inline">{p.name.slice(0,3)}</span>
+              <span className={`text-[10px] hidden sm:inline ${
+                darkCalendar ? "text-white/40" : "text-black/40"
+              }`}>{p.name.slice(0,3)}</span>
             </div>
           ))}
         </div>
@@ -72,7 +88,9 @@ function MonthCalendar({ year, month, today }) {
       {/* Day Headers */}
       <div className="grid grid-cols-7 gap-y-2.5 gap-x-1.5 text-center text-sm font-sans">
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-          <div key={i} className="text-white/40 font-bold text-xs uppercase pb-1">{d}</div>
+          <div key={i} className={`font-bold text-xs uppercase pb-1 ${
+            darkCalendar ? "text-white/40" : "text-black/40"
+          }`}>{d}</div>
         ))}
 
         {/* Empty leading cells */}
@@ -83,11 +101,17 @@ function MonthCalendar({ year, month, today }) {
         {/* Day cells */}
         {Array.from({ length: daysInMonth }).map((_, i) => {
           const day = i + 1;
-          const phase = getPhaseForDay(day);
+          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const loggedDay = logMap[dateStr];
+          const phase = loggedDay ? phases.find(p => p.id === loggedDay.phase) : getPhaseForDay(day);
           const isToday = isCurrentMonth && day === today.day;
 
           return (
-            <div key={day} className="relative flex items-center justify-center h-9 w-9 mx-auto">
+            <button
+              key={day}
+              onClick={() => onDayClick(year, month, day)}
+              className="relative flex items-center justify-center h-9 w-9 mx-auto cursor-pointer focus:outline-none"
+            >
               {phase && (
                 <motion.div
                   initial={{ scale: 0.85 }}
@@ -105,10 +129,14 @@ function MonthCalendar({ year, month, today }) {
                   className="absolute inset-0 border-2 border-dashed rounded-xl border-[#df9b6d] z-10"
                 />
               )}
-              <span className={`relative z-10 font-bold text-sm ${phase ? 'text-[#1e2722]' : 'text-white'}`}>
+              <span className={`relative z-10 font-bold text-sm ${
+                phase 
+                  ? 'text-[#1e2722]' 
+                  : (darkCalendar ? 'text-white' : 'text-black')
+              }`}>
                 {day}
               </span>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -116,10 +144,43 @@ function MonthCalendar({ year, month, today }) {
   );
 }
 
-export default function CalendarView({ username = 'user', setView }) {
+export default function CalendarView({ username = 'user', setView, token, user, onLogout, selectedDate, setSelectedDate }) {
   const now = new Date();
   const today = { year: now.getFullYear(), month: now.getMonth(), day: now.getDate() };
   
+  const [logs, setLogs] = useState([]);
+  const [darkCalendar, setDarkCalendar] = useState(() => {
+    const saved = localStorage.getItem('selene_dark_calendar');
+    return saved === null ? true : saved === 'true';
+  });
+
+  
+  useEffect(() => {
+    const fetchLogs = async () => {
+      if (!token) return;
+      try {
+        const response = await fetch('/api/logs', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const data = await response.json();
+        if (response.ok && data.logs) {
+          setLogs(data.logs);
+        }
+      } catch (e) {
+        console.error("Failed to fetch logs in calendar view", e);
+      }
+    };
+    fetchLogs();
+  }, [token]);
+
+  const handleDayClick = (year, month, day) => {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    setSelectedDate(dateStr);
+    setView('dashboard');
+  };
+
   // Start viewing from 2 months ago so the current month is centered
   const [startYear, setStartYear] = useState(now.getFullYear());
   const [startMonth, setStartMonth] = useState(now.getMonth() > 0 ? now.getMonth() - 1 : 11);
@@ -193,12 +254,28 @@ export default function CalendarView({ username = 'user', setView }) {
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4 flex-wrap justify-end">
           <button
             onClick={() => setView('dashboard')}
-            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-6 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
           >
             ← Dashboard
+          </button>
+          <button
+            onClick={() => setView('settings')}
+            className="w-10 h-10 rounded-full bg-black/10 hover:bg-black/20 flex items-center justify-center transition-colors cursor-pointer focus:outline-none"
+            title="Settings"
+          >
+            <svg viewBox="0 0 24 24" className="w-5 h-5 text-black" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+          <button
+            onClick={onLogout}
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+          >
+            Log Out
           </button>
         </div>
       </motion.div>
@@ -277,7 +354,7 @@ export default function CalendarView({ username = 'user', setView }) {
             className="flex flex-col gap-8"
           >
             {months.map(({ year, month }) => (
-              <MonthCalendar key={`${year}-${month}`} year={year} month={month} today={today} />
+              <MonthCalendar key={`${year}-${month}`} year={year} month={month} today={today} logs={logs} onDayClick={handleDayClick} darkCalendar={darkCalendar} />
             ))}
           </motion.div>
         </AnimatePresence>
