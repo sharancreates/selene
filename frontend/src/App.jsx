@@ -183,82 +183,143 @@ function App() {
 }
 
 function evaluateSafeMath(expr) {
-  // Safe math evaluator that parses standard binary expressions with precedence: * / then + -
-  const sanitized = expr.replace(/[^0-9+\-*/.]/g, '');
-  if (!sanitized) return 0;
-  
-  // Convert unary starting sign to a binary expression (e.g. -3 -> 0-3)
-  const formatted = sanitized.replace(/^([+\-])/, '0$1');
-  
+  // Safe math evaluator that parses standard expressions using a recursive descent parser
+  const cleanExpr = expr.replace(/\s+/g, '');
+  if (!cleanExpr) return 0;
+  if (/[^0-9+\-*/.()]/.test(cleanExpr)) {
+    throw new Error("Invalid characters");
+  }
+
   const tokens = [];
-  let currentNum = "";
-  
-  for (let i = 0; i < formatted.length; i++) {
-    const char = formatted[i];
+  let i = 0;
+  while (i < cleanExpr.length) {
+    const char = cleanExpr[i];
     if (/[0-9.]/.test(char)) {
-      currentNum += char;
-    } else {
-      if (currentNum !== "") {
-        tokens.push(parseFloat(currentNum));
-        currentNum = "";
+      let numStr = "";
+      while (i < cleanExpr.length && /[0-9.]/.test(cleanExpr[i])) {
+        numStr += cleanExpr[i];
+        i++;
       }
-      tokens.push(char);
+      tokens.push({ type: 'NUMBER', value: parseFloat(numStr) });
+    } else if (['+', '-', '*', '/', '(', ')'].includes(char)) {
+      tokens.push({ type: char });
+      i++;
+    } else {
+      throw new Error("Invalid character");
     }
   }
-  if (currentNum !== "") {
-    tokens.push(parseFloat(currentNum));
+
+  let tokenIdx = 0;
+  function peek() {
+    return tokens[tokenIdx];
   }
-  
-  if (tokens.length === 0) return 0;
-  
-  // Multiplication & division pass
-  const pass1 = [];
-  let idx = 0;
-  while (idx < tokens.length) {
-    const token = tokens[idx];
-    if (token === '*' || token === '/') {
-      const prevVal = pass1.pop();
-      const nextVal = tokens[idx + 1];
-      if (prevVal === undefined || nextVal === undefined || typeof prevVal !== 'number' || typeof nextVal !== 'number') {
-        throw new Error("Invalid expression");
+  function consume(expectedType) {
+    const tok = peek();
+    if (!tok || (expectedType && tok.type !== expectedType)) {
+      throw new Error("Unexpected token");
+    }
+    tokenIdx++;
+    return tok;
+  }
+
+  // Grammer rules:
+  // expression -> term ( ( '+' | '-' ) term )*
+  // term       -> factor ( ( '*' | '/' ) factor )*
+  // factor     -> NUMBER | '(' expression ')' | '-' factor | '+' factor
+
+  function parseExpression() {
+    let node = parseTerm();
+    while (true) {
+      const next = peek();
+      if (next && (next.type === '+' || next.type === '-')) {
+        const op = consume().type;
+        const right = parseTerm();
+        node = { type: 'BINARY', op, left: node, right };
+      } else {
+        break;
       }
-      const res = token === '*' ? prevVal * nextVal : prevVal / nextVal;
-      pass1.push(res);
-      idx += 2;
-    } else {
-      pass1.push(token);
-      idx++;
     }
+    return node;
   }
-  
-  // Addition & subtraction pass
-  if (pass1.length === 0) return 0;
-  let result = pass1[0];
-  if (typeof result !== 'number') {
-    throw new Error("Invalid expression");
-  }
-  
-  idx = 1;
-  while (idx < pass1.length) {
-    const op = pass1[idx];
-    const nextVal = pass1[idx + 1];
-    if (nextVal === undefined || typeof nextVal !== 'number') {
-      throw new Error("Invalid expression");
+
+  // term       -> factor ( ( '*' | '/' ) factor )*
+  function parseTerm() {
+    let node = parseFactor();
+    while (true) {
+      const next = peek();
+      if (next && (next.type === '*' || next.type === '/')) {
+        const op = consume().type;
+        const right = parseFactor();
+        node = { type: 'BINARY', op, left: node, right };
+      } else {
+        break;
+      }
     }
-    if (op === '+') {
-      result += nextVal;
-    } else if (op === '-') {
-      result -= nextVal;
-    } else {
-      throw new Error("Invalid operator");
-    }
-    idx += 2;
+    return node;
   }
-  
-  if (isNaN(result) || !isFinite(result)) {
+
+  // factor     -> NUMBER | '(' expression ')' | '-' factor | '+' factor
+  function parseFactor() {
+    const tok = peek();
+    if (!tok) {
+      throw new Error("Unexpected end of expression");
+    }
+    if (tok.type === '-') {
+      consume();
+      const val = parseFactor();
+      return { type: 'UNARY', op: '-', value: val };
+    }
+    if (tok.type === '+') {
+      consume();
+      const val = parseFactor();
+      return { type: 'UNARY', op: '+', value: val };
+    }
+    if (tok.type === '(') {
+      consume('(');
+      const exprNode = parseExpression();
+      consume(')');
+      return exprNode;
+    }
+    if (tok.type === 'NUMBER') {
+      return consume('NUMBER');
+    }
+    throw new Error("Unexpected token");
+  }
+
+  const ast = parseExpression();
+  if (tokenIdx < tokens.length) {
+    throw new Error("Extra tokens");
+  }
+
+  function evaluateAST(node) {
+    if (node.type === 'NUMBER') {
+      return node.value;
+    }
+    if (node.type === 'UNARY') {
+      const val = evaluateAST(node.value);
+      return node.op === '-' ? -val : val;
+    }
+    if (node.type === 'BINARY') {
+      const left = evaluateAST(node.left);
+      const right = evaluateAST(node.right);
+      if (node.op === '+') return left + right;
+      if (node.op === '-') return left - right;
+      if (node.op === '*') return left * right;
+      if (node.op === '/') {
+        if (right === 0) {
+          throw new Error("Division by zero");
+        }
+        return left / right;
+      }
+    }
+    throw new Error("Invalid AST node");
+  }
+
+  const res = evaluateAST(ast);
+  if (isNaN(res) || !isFinite(res)) {
     throw new Error("Invalid math result");
   }
-  return result;
+  return res;
 }
 
 function CalculatorGuard({ token, onUnlock }) {

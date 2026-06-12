@@ -156,6 +156,8 @@ def predict_next_cycle():
 
         # 6. Generate empathetic, personalized insights based on health conditions
         insight = get_empathetic_insight(current_phase_est, user)
+        if user.has_pcos or user.has_pmdd or user.has_endo:
+            insight += " (Disclaimer: This insight is for educational tracking and does not constitute medical advice.)"
 
         return jsonify({
             "status": "success",

@@ -60,6 +60,15 @@ def create_app(config_class=Config):
             "database_target": app.config['SQLALCHEMY_DATABASE_URI'].split('://')[0],
             "app_name": "selene-api"
         }), 200
+
+    # Register global exception handler to avoid leaking error details
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return jsonify({"error": e.description}), e.code
+        app.logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
+        return jsonify({"error": "An unexpected internal database or system error occurred."}), 500
         
     # Auto-initialize database tables in local contexts (SQLite or PostgreSQL)
     # Note: For production, use 'flask db upgrade' instead of create_all()

@@ -477,6 +477,133 @@ class SeleneBackendTestCase(unittest.TestCase):
         titles = [ins['title'] for ins in insights2]
         self.assertTrue(any("Trend" in t or "Window" in t or "Calibrating" in t for t in titles))
 
+    def test_medical_disclaimer_prediction(self):
+        """
+        Verifies that predictions returned for users with chronic conditions
+        contain the medical disclaimer.
+        """
+        # Register user with PCOS
+        register_payload = {
+            "username": "disclaimer_user", "pin": "777777",
+            "cycle_length_baseline": 28, "period_length_baseline": 5,
+            "has_pcos": True, "has_pmdd": False, "has_endo": False
+        }
+        res_reg = self.client.post('/api/auth/register', json=register_payload)
+        token = res_reg.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+
+        # Log 11 entries starting 2026-06-01
+        from datetime import date, timedelta
+        for i in range(1, 12):
+            self.client.post('/api/logs/sync', json={
+                "log_date": f"2026-06-{i:02d}", "phase": "menstrual" if i <= 5 else "follicular"
+            }, headers=headers)
+
+        res_pred = self.client.get('/api/predict/next-cycle?date=2026-06-25', headers=headers)
+        self.assertEqual(res_pred.status_code, 200)
+        data = res_pred.get_json()
+        insight = data['prediction']['insight']
+        self.assertIn("Disclaimer: This insight is for educational tracking and does not constitute medical advice.", insight)
+
+    def test_global_exception_handler(self):
+        """
+        Verifies that unhandled exceptions are caught by the global error handler
+        and return a generic error payload instead of leaking internal traces.
+        """
+        from unittest.mock import patch
+        register_payload = {"username": "error_tester", "pin": "123456"}
+        res_reg = self.client.post('/api/auth/register', json=register_payload)
+        token = res_reg.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+
+        # Mock check_password_hash in auth to raise an unhandled exception
+        with patch('auth.check_password_hash', side_effect=RuntimeError("Auth hash error simulation")):
+            res = self.client.post('/api/auth/verify-pin', json={"pin": "123456"}, headers=headers)
+            self.assertEqual(res.status_code, 500)
+            data = res.get_json()
+            self.assertEqual(data['error'], "An unexpected internal database or system error occurred.")
+
+    def test_key_rotation_and_data_preservation(self):
+        """
+        Verifies key rotation successfully decrypts with the old key,
+        re-encrypts with the new key, preserves correct data, and changes ciphertext.
+        """
+        import tempfile
+        import os
+        from rotate_key import rotate_keys
+        
+        # Create a temporary key file
+        fd, temp_key_path = tempfile.mkstemp()
+        os.close(fd)
+        
+        try:
+            # Write a valid initial key to this path
+            from cryptography.fernet import Fernet
+            initial_key = Fernet.generate_key().decode()
+            with open(temp_key_path, 'w') as f:
+                f.write(initial_key)
+                
+            # Temporarily set the active models.cipher_suite to match this initial key
+            import models
+            old_cipher_suite = models.cipher_suite
+            models.cipher_suite = Fernet(initial_key.encode())
+
+            reg_payload = {"username": "rotation_tester", "pin": "999999"}
+            res_reg = self.client.post('/api/auth/register', json=reg_payload)
+            token = res_reg.get_json()['token']
+            headers = {'Authorization': f'Bearer {token}'}
+
+            log_payload = {
+                "log_date": "2026-06-01",
+                "phase": "menstrual",
+                "energy_level": 75,
+                "basal_body_temp": 98.4
+            }
+            self.client.post('/api/logs/sync', json=log_payload, headers=headers)
+
+            # Retrieve first raw ciphertexts
+            connection = db.engine.raw_connection()
+            cursor = connection.cursor()
+            cursor.execute("SELECT phase, energy_level, basal_body_temp FROM daily_logs LIMIT 1")
+            row = cursor.fetchone()
+            cursor.close()
+            connection.close()
+            
+            raw_phase_1, raw_energy_1, raw_temp_1 = row
+            self.assertTrue(raw_phase_1.startswith("gAAAAA"))
+
+            # Run key rotation using the active testing app context and temp key path
+            rotate_keys(app=self.app, key_path=temp_key_path)
+
+            # Check that querying via models still returns correct decrypted data
+            log = DailyLog.query.filter_by(log_date=date(2026, 6, 1)).first()
+            self.assertEqual(log.phase, "menstrual")
+            self.assertEqual(log.energy_level, 75)
+            self.assertEqual(log.basal_body_temp, 98.4)
+
+            # Retrieve second raw ciphertexts
+            connection = db.engine.raw_connection()
+            cursor = connection.cursor()
+            cursor.execute("SELECT phase, energy_level, basal_body_temp FROM daily_logs LIMIT 1")
+            row_new = cursor.fetchone()
+            cursor.close()
+            connection.close()
+
+            raw_phase_2, raw_energy_2, raw_temp_2 = row_new
+            self.assertTrue(raw_phase_2.startswith("gAAAAA"))
+            
+            # Verify that ciphertexts are different because of the new key
+            self.assertNotEqual(raw_phase_1, raw_phase_2)
+            self.assertNotEqual(raw_energy_1, raw_energy_2)
+            self.assertNotEqual(raw_temp_1, raw_temp_2)
+            
+        finally:
+            # Clean up temp key file
+            if os.path.exists(temp_key_path):
+                os.remove(temp_key_path)
+            # Restore original models.cipher_suite
+            models.cipher_suite = old_cipher_suite
+
 
 if __name__ == '__main__':
     unittest.main()
