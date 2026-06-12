@@ -110,6 +110,10 @@ def register():
     
     if not username or not pin:
         return jsonify({"error": "Username and PIN are required parameters"}), 400
+        
+    username = str(username).strip()
+    if len(username) < 3 or len(username) > 80:
+        return jsonify({"error": "Username must be between 3 and 80 characters long."}), 400
     
     is_valid, error_msg = is_valid_pin(pin)
     if not is_valid:

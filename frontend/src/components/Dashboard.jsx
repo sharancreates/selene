@@ -45,6 +45,13 @@ const phases = [
   }
 ];
 
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return '';
+};
+
 export default function Dashboard({ username = 'user', setView, token, user, onLogout, selectedDate, setSelectedDate }) {
   const [activePhase, setActivePhase] = useState('menstrual');
   const [allLogs, setAllLogs] = useState([]);
@@ -215,7 +222,8 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'X-CSRF-Token': getCookie('csrf_token')
         },
         body: JSON.stringify(payload)
       });
@@ -850,21 +858,21 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
                       leftLabel="self-conscious"
                       rightLabel="unstoppable"
                       value={ovulatorySliders.confidence}
-                      onChange={(val) => setValues(setOvulatorySliders, 'confidence', val)}
+                      onChange={(val) => setOvulatorySliders(prev => ({ ...prev, confidence: val }))}
                     />
                     <CustomSlider
                       label="3. Social Battery"
                       leftLabel="low/drained"
                       rightLabel="social butterfly"
                       value={ovulatorySliders.social}
-                      onChange={(val) => setValues(setOvulatorySliders, 'social', val)}
+                      onChange={(val) => setOvulatorySliders(prev => ({ ...prev, social: val }))}
                     />
                     <CustomSlider
                       label="4. Fluid Retention"
                       leftLabel="none"
                       rightLabel="moderate bloating"
                       value={ovulatorySliders.bloating}
-                      onChange={(val) => setValues(setOvulatorySliders, 'bloating', val)}
+                      onChange={(val) => setOvulatorySliders(prev => ({ ...prev, bloating: val }))}
                     />
                   </>
                 )}
@@ -876,28 +884,28 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
                       leftLabel="none"
                       rightLabel="severe bloating"
                       value={lutealSliders.bloating}
-                      onChange={(val) => setValues(setLutealSliders, 'bloating', val)}
+                      onChange={(val) => setLutealSliders(prev => ({ ...prev, bloating: val }))}
                     />
                     <CustomSlider
                       label="2. Breast Sensitivity"
                       leftLabel="none"
                       rightLabel="severe soreness"
                       value={lutealSliders.breastSensitivity}
-                      onChange={(val) => setValues(setLutealSliders, 'breastSensitivity', val)}
+                      onChange={(val) => setLutealSliders(prev => ({ ...prev, breastSensitivity: val }))}
                     />
                     <CustomSlider
                       label="3. Irritability & Mood Swings"
                       leftLabel="calm"
                       rightLabel="highly irritable"
                       value={lutealSliders.anxiety}
-                      onChange={(val) => setValues(setLutealSliders, 'anxiety', val)}
+                      onChange={(val) => setLutealSliders(prev => ({ ...prev, anxiety: val }))}
                     />
                     <CustomSlider
                       label="4. Cravings (Salty vs Sweet)"
                       leftLabel="salty/savory"
                       rightLabel="sweet/chocolate"
                       value={lutealSliders.cravings}
-                      onChange={(val) => setValues(setLutealSliders, 'cravings', val)}
+                      onChange={(val) => setLutealSliders(prev => ({ ...prev, cravings: val }))}
                     />
                   </>
                 )}
@@ -1369,10 +1377,7 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
   );
 }
 
-// State setter helper utility
-function setValues(setter, key, val) {
-  setter(prev => ({ ...prev, [key]: val }));
-}
+// Helper functions
 
 // Custom Slider Component matching the mockup styling
 function CustomSlider({ label, leftLabel, rightLabel, value, onChange }) {

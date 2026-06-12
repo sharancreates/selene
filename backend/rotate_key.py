@@ -9,42 +9,26 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from app import create_app
 from models import db
 
-def rotate_keys(app=None, key_path=None):
+def rotate_keys(app=None, key_path=None, old_key=None, new_key=None):
     if app is None:
         app = create_app()
     with app.app_context():
-        if key_path is None:
-            key_file_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '.encryption_key')
-        else:
-            key_file_path = key_path
-        
-        # Read old key if it exists
-        old_key = None
-        if os.path.exists(key_file_path):
-            with open(key_file_path, 'r') as f:
-                old_key = f.read().strip()
+        # Retrieve the old key
+        if old_key is None:
+            if key_path is not None and os.path.exists(key_path):
+                with open(key_path, 'r') as f:
+                    old_key = f.read().strip()
+            else:
+                old_key = os.environ.get('SELENE_ENCRYPTION_KEY')
                 
-        # Generate new key
-        new_key = Fernet.generate_key().decode()
-        
         if not old_key:
-            print("No old encryption key found. Writing new key to .encryption_key.")
-            with open(key_file_path, 'w') as f:
-                f.write(new_key)
-            # Update in-memory models
-            try:
-                import models
-                models.cipher_suite = Fernet(new_key.encode())
-            except ImportError:
-                pass
-            try:
-                import backend.models as backend_models
-                backend_models.cipher_suite = Fernet(new_key.encode())
-            except ImportError:
-                pass
-            print("Key initialized successfully.")
-            return
-
+            print("Error: No old encryption key provided or found in environment variable 'SELENE_ENCRYPTION_KEY'.")
+            sys.exit(1)
+            
+        # Generate new key if not provided
+        if new_key is None:
+            new_key = Fernet.generate_key().decode()
+            
         print(f"Old key: {old_key[:10]}...{old_key[-10:]}")
         print(f"New key: {new_key[:10]}...{new_key[-10:]}")
         
@@ -90,21 +74,21 @@ def rotate_keys(app=None, key_path=None):
                     db.session.execute(sql_update, {**updates, 'id': log_id})
                     rotated_count += 1
             
-            # Save new key to file
-            with open(key_file_path, 'w') as f:
-                f.write(new_key)
+            # Save new key to file if key_path was explicitly provided (e.g. during testing)
+            if key_path is not None:
+                with open(key_path, 'w') as f:
+                    f.write(new_key)
+            else:
+                print("\n" + "="*80)
+                print("DATABASE ROTATION SUCCESSFUL!")
+                print("Please update your .env file with the new key:")
+                print(f"SELENE_ENCRYPTION_KEY={new_key}")
+                print("="*80 + "\n")
                 
             # Update the loaded models cipher suite in memory
-            try:
-                import models
-                models.cipher_suite = new_cipher
-            except ImportError:
-                pass
-            try:
-                import backend.models as backend_models
-                backend_models.cipher_suite = new_cipher
-            except ImportError:
-                pass
+            for module_name in ['models', 'backend.models']:
+                if module_name in sys.modules:
+                    sys.modules[module_name].cipher_suite = new_cipher
 
             db.session.commit()
             print(f"Successfully rotated keys for {rotated_count} daily log entries.")

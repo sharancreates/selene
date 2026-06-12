@@ -604,6 +604,57 @@ class SeleneBackendTestCase(unittest.TestCase):
             # Restore original models.cipher_suite
             models.cipher_suite = old_cipher_suite
 
+    def test_username_length_validation(self):
+        """
+        Verifies that registering with a username length < 3 or > 80 fails with 400.
+        """
+        # Under 3 characters
+        payload_short = {"username": "ab", "pin": "123456"}
+        res_short = self.client.post('/api/auth/register', json=payload_short)
+        self.assertEqual(res_short.status_code, 400)
+        self.assertIn("Username must be between 3 and 80 characters long.", res_short.get_json().get('error', ''))
+
+        # Over 80 characters
+        payload_long = {"username": "a" * 81, "pin": "123456"}
+        res_long = self.client.post('/api/auth/register', json=payload_long)
+        self.assertEqual(res_long.status_code, 400)
+        self.assertIn("Username must be between 3 and 80 characters long.", res_long.get_json().get('error', ''))
+
+    def test_csrf_protection_validation(self):
+        """
+        Verifies that state-changing requests fail with 400 when CSRF cookie/header is missing,
+        and succeed when matching CSRF token cookie and X-CSRF-Token header are supplied.
+        """
+        # Enable CSRF check by toggling TESTING config to False
+        self.app.config['TESTING'] = False
+        try:
+            # 1. Try registration without CSRF headers
+            register_payload = {"username": "csrf_test_user", "pin": "123456"}
+            res = self.client.post('/api/auth/register', json=register_payload)
+            self.assertEqual(res.status_code, 400)
+            self.assertIn("CSRF token validation failed.", res.get_json().get('error', ''))
+            
+            # Retrieve the csrf_token cookie from the first response headers
+            set_cookies = res.headers.getlist('Set-Cookie')
+            csrf_cookie = None
+            for cookie_str in set_cookies:
+                if 'csrf_token=' in cookie_str:
+                    csrf_cookie = cookie_str.split('csrf_token=')[1].split(';')[0]
+                    break
+            self.assertIsNotNone(csrf_cookie)
+            
+            # 2. Post again with CSRF cookie AND header
+            headers = {'X-CSRF-Token': csrf_cookie}
+            # Set the cookie in the client's cookie jar manually for this request
+            self.client.set_cookie('csrf_token', csrf_cookie)
+            res_valid = self.client.post('/api/auth/register', json=register_payload, headers=headers)
+            self.assertEqual(res_valid.status_code, 201)
+            self.assertEqual(res_valid.get_json()['status'], 'success')
+            
+        finally:
+            # Re-enable TESTING config to not affect other tests
+            self.app.config['TESTING'] = True
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -13,6 +13,13 @@ import Settings from './components/Settings';
 import { motion } from 'framer-motion';
 
 
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return '';
+};
+
 function App() {
   const getInitialView = () => {
     const path = window.location.pathname;
@@ -52,6 +59,7 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-CSRF-Token': getCookie('csrf_token'),
           ...(storedToken ? { 'Authorization': `Bearer ${storedToken}` } : {})
         },
         credentials: 'include'
@@ -76,6 +84,9 @@ function App() {
         try {
           const response = await fetch('/api/auth/refresh', {
             method: 'POST',
+            headers: {
+              'X-CSRF-Token': getCookie('csrf_token')
+            },
             credentials: 'include'
           });
           const data = await response.json();
@@ -338,7 +349,8 @@ function CalculatorGuard({ token, onUnlock }) {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
+              'Authorization': `Bearer ${token}`,
+              'X-CSRF-Token': getCookie('csrf_token')
             },
             body: JSON.stringify({ pin: trimmed })
           });

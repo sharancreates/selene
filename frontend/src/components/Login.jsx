@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return '';
+};
+
 export default function Login({ setView, onLoginSuccess }) {
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
@@ -29,7 +36,10 @@ export default function Login({ setView, onLoginSuccess }) {
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': getCookie('csrf_token')
+        },
         credentials: 'include',
         body: JSON.stringify({ username, pin })
       });

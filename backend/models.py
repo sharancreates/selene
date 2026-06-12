@@ -27,20 +27,16 @@ def is_valid_pin(pin):
 
 
 # Setup Fernet Encryption Key
-# Attempts to read environment key; if absent, reads/writes from/to a persistent local file
+# Attempts to read environment key; if absent, raises ValueError unless in a testing context
 encryption_key = os.environ.get('SELENE_ENCRYPTION_KEY')
 if not encryption_key:
-    key_file_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '.encryption_key')
-    if os.path.exists(key_file_path):
-        with open(key_file_path, 'r') as f:
-            encryption_key = f.read().strip()
-    else:
+    import sys
+    is_testing = 'unittest' in sys.modules or os.environ.get('TESTING') == 'True' or os.environ.get('FLASK_ENV') == 'testing'
+    if is_testing:
+        # Generate temporary key for unit testing execution contexts
         encryption_key = Fernet.generate_key().decode()
-        try:
-            with open(key_file_path, 'w') as f:
-                f.write(encryption_key)
-        except Exception as e:
-            print(f"Warning: Could not save persistent encryption key: {str(e)}")
+    else:
+        raise ValueError("SELENE_ENCRYPTION_KEY environment variable is required.")
 
 cipher_suite = Fernet(encryption_key.encode())
 

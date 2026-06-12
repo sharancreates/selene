@@ -172,20 +172,12 @@ def predict_next_cycle():
         }), 200
 
     except Exception as e:
-        # Safety fallback: return a clean baseline state if calculations fail
-        print(f"Prediction logic error: {str(e)}")
-        fallback_date = (datetime.now() + timedelta(days=28)).date().isoformat()
+        from flask import current_app
+        current_app.logger.error(f"Prediction logic error: {str(e)}", exc_info=True)
         return jsonify({
-            "status": "success",
-            "prediction": {
-                "next_period_date": fallback_date,
-                "estimated_phase": "follicular",
-                "days_until_period": 28,
-                "cycle_length_calculated": user.cycle_length_baseline or 28,
-                "period_length_calculated": user.period_length_baseline or 5,
-                "insight": "Your Selene companion is active. Keep logging daily symptoms to calibrate personalized insights."
-            }
-        }), 200
+            "status": "error",
+            "error": "Failed to calculate cycle prediction due to an internal error."
+        }), 500
 
 
 @predict_bp.route('/insights', methods=['GET'])

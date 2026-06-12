@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -41,7 +41,7 @@ def create_app(config_class=Config):
     CORS(app, resources={r"/api/*": {
         "origins": app.config['ALLOWED_ORIGINS'],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
+        "allow_headers": ["Content-Type", "Authorization", "X-CSRF-Token"]
     }}, supports_credentials=True)
     
     # Initialize SQLAlchemy database instance
@@ -52,14 +52,49 @@ def create_app(config_class=Config):
     app.register_blueprint(logs_bp, url_prefix='/api/logs')
     app.register_blueprint(predict_bp, url_prefix='/api/predict')
     
+    # CSRF Protection Hook for Single Page Application
+    @app.before_request
+    def check_csrf():
+        # Bypass for testing mode or safe methods
+        if app.config.get('TESTING') or request.method in ('GET', 'OPTIONS', 'HEAD'):
+            return
+            
+        csrf_cookie = request.cookies.get('csrf_token')
+        csrf_header = request.headers.get('X-CSRF-Token')
+        
+        if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+            return jsonify({"error": "CSRF token validation failed."}), 400
+
+    @app.after_request
+    def set_csrf_cookie(response):
+        # Only set cookie if it does not exist in request cookies
+        if not request.cookies.get('csrf_token'):
+            import secrets
+            token = secrets.token_hex(16)
+            response.set_cookie(
+                'csrf_token',
+                token,
+                samesite='Strict',
+                secure=app.config.get('SESSION_COOKIE_SECURE', True),
+                httponly=False  # Must be read by React frontend JS
+            )
+        return response
+
     # Service health checking route
     @app.route('/health', methods=['GET'])
     def health_check():
+        try:
+            from sqlalchemy import text
+            db.session.execute(text("SELECT 1"))
+            db_status = "connected"
+        except Exception:
+            db_status = "disconnected"
+            
         return jsonify({
-            "status": "healthy",
-            "database_target": app.config['SQLALCHEMY_DATABASE_URI'].split('://')[0],
+            "status": "healthy" if db_status == "connected" else "unhealthy",
+            "database": db_status,
             "app_name": "selene-api"
-        }), 200
+        }), 200 if db_status == "connected" else 500
 
     # Register global exception handler to avoid leaking error details
     @app.errorhandler(Exception)
@@ -70,16 +105,8 @@ def create_app(config_class=Config):
         app.logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
         return jsonify({"error": "An unexpected internal database or system error occurred."}), 500
         
-    # Auto-initialize database tables in local contexts (SQLite or PostgreSQL)
-    # Note: For production, use 'flask db upgrade' instead of create_all()
-    # create_all() is kept for backward compatibility with existing deployments
-    with app.app_context():
-        db.create_all()
-        
-        # Mark migration as complete for the in-memory database
-        # In production, 'flask db upgrade' should be run instead
-        
     return app
+
 
 app = create_app()
 

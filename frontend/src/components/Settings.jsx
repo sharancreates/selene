@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return '';
+};
+
 export default function Settings({ username = 'user', setView, token, user, setUser, onLogout }) {
   // Profile
   const [displayName, setDisplayName] = useState(user?.username || username);
@@ -92,7 +99,8 @@ export default function Settings({ username = 'user', setView, token, user, setU
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'X-CSRF-Token': getCookie('csrf_token')
         },
         body: JSON.stringify({
           cycle_length_baseline: cycleLength,
@@ -128,7 +136,8 @@ export default function Settings({ username = 'user', setView, token, user, setU
         const response = await fetch('/api/auth/account', {
           method: 'DELETE',
           headers: {
-            'Authorization': `Bearer ${token}`
+            'Authorization': `Bearer ${token}`,
+            'X-CSRF-Token': getCookie('csrf_token')
           }
         });
         const data = await response.json();
