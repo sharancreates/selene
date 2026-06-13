@@ -137,8 +137,13 @@ function App() {
     // 1. Seed the CSRF token cookie on every app load (GET — no CSRF needed)
     fetch('/api/auth/csrf', { credentials: 'include' }).catch(() => {});
 
-    // 2. Restore active session from refresh cookie
-    checkSession();
+    // 2. Only attempt session restore if user was previously logged in.
+    //    Skipping for fresh users avoids a race condition where a delayed
+    //    checkSession response arrives after registration sets selene_logged_in,
+    //    causing handleLogout to fire and wipe the freshly set dashboard.
+    if (localStorage.getItem('selene_logged_in') === 'true') {
+      checkSession();
+    }
 
     // 3. Automatic token refresh every 10 minutes (before the 15-minute token expiry)
     const refreshInterval = setInterval(() => {
