@@ -84,10 +84,11 @@ function App() {
     setUser(null);
     setIsUnlocked(true);
     localStorage.removeItem('selene_logged_in');
-    setView('landing');
+    window.history.replaceState({}, '', '/');
+    setViewInternal('landing');
   };
 
-  const checkSession = async () => {
+  const checkSession = async (redirectOnFail = true) => {
     try {
       const response = await fetch('/api/auth/refresh', {
         method: 'POST',
@@ -105,8 +106,27 @@ function App() {
         
         const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
         setIsUnlocked(!camo);
-      } else {
-        handleLogout();
+        // Restore view only if we're currently on a protected path and have no view set
+        const path = window.location.pathname;
+        const protectedPaths = ['/dashboard', '/calendar', '/settings'];
+        if (protectedPaths.includes(path)) {
+          const viewMap = { '/dashboard': 'dashboard', '/calendar': 'calendar', '/settings': 'settings' };
+          setViewInternal(viewMap[path]);
+        }
+      } else if (redirectOnFail) {
+        // Only force a redirect if they were previously logged in
+        const wasLoggedIn = localStorage.getItem('selene_logged_in') === 'true';
+        if (wasLoggedIn) {
+          handleLogout();
+        } else {
+          // Fresh unauthenticated visitor on a protected route → send to login
+          const path = window.location.pathname;
+          const protectedPaths = ['/dashboard', '/calendar', '/settings'];
+          if (protectedPaths.includes(path)) {
+            setViewInternal('login');
+            window.history.replaceState({}, '', '/login');
+          }
+        }
       }
     } catch (e) {
       console.error("Session check failed", e);
