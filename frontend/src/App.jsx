@@ -66,7 +66,11 @@ function App() {
     }
   }, []);
 
+  // Guards against checkSession firing during an active login/register flow
+  const isAuthenticating = React.useRef(false);
+
   const handleLogout = async () => {
+    isAuthenticating.current = false;
     try {
       await fetch('/api/auth/logout', {
         method: 'POST',
@@ -88,41 +92,37 @@ function App() {
     setViewInternal('landing');
   };
 
-  const checkSession = async (redirectOnFail = true) => {
+  const checkSession = async () => {
+    // Never run during an active login/register to avoid race conditions
+    if (isAuthenticating.current) return;
     try {
       const response = await fetch('/api/auth/refresh', {
         method: 'POST',
-        headers: {
-          'X-CSRF-Token': getCookie('csrf_token')
-        },
+        headers: { 'X-CSRF-Token': getCookie('csrf_token') },
         credentials: 'include'
       });
+      // Bail if login/register happened while we were waiting
+      if (isAuthenticating.current) return;
       const data = await response.json();
       if (response.ok) {
         setToken(data.token);
         setUser(data.user);
         setUsername(data.user.username);
         localStorage.setItem('selene_logged_in', 'true');
-        
         const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
         setIsUnlocked(!camo);
-        // Restore view only if we're currently on a protected path and have no view set
+        // Restore the correct view for the current URL
         const path = window.location.pathname;
-        const protectedPaths = ['/dashboard', '/calendar', '/settings'];
-        if (protectedPaths.includes(path)) {
-          const viewMap = { '/dashboard': 'dashboard', '/calendar': 'calendar', '/settings': 'settings' };
-          setViewInternal(viewMap[path]);
-        }
-      } else if (redirectOnFail) {
-        // Only force a redirect if they were previously logged in
+        const viewMap = { '/dashboard': 'dashboard', '/calendar': 'calendar', '/settings': 'settings' };
+        if (viewMap[path]) setViewInternal(viewMap[path]);
+      } else {
         const wasLoggedIn = localStorage.getItem('selene_logged_in') === 'true';
         if (wasLoggedIn) {
-          handleLogout();
+          await handleLogout();
         } else {
-          // Fresh unauthenticated visitor on a protected route → send to login
+          // Unauthenticated visitor on a protected route → send to login
           const path = window.location.pathname;
-          const protectedPaths = ['/dashboard', '/calendar', '/settings'];
-          if (protectedPaths.includes(path)) {
+          if (['/dashboard', '/calendar', '/settings'].includes(path)) {
             setViewInternal('login');
             window.history.replaceState({}, '', '/login');
           }
@@ -134,25 +134,27 @@ function App() {
   };
 
   useEffect(() => {
-    // 1. Seed the CSRF token cookie on every app load (GET — no CSRF needed)
-    fetch('/api/auth/csrf', { credentials: 'include' }).catch(() => {});
+    const init = async () => {
+      // Seed the CSRF cookie first, then attempt session restore
+      try {
+        await fetch('/api/auth/csrf', { credentials: 'include' });
+      } catch (_) {}
 
-    // 2. Only attempt session restore if user was previously logged in.
-    //    Skipping for fresh users avoids a race condition where a delayed
-    //    checkSession response arrives after registration sets selene_logged_in,
-    //    causing handleLogout to fire and wipe the freshly set dashboard.
-    if (localStorage.getItem('selene_logged_in') === 'true') {
-      checkSession();
-    }
-
-    // 3. Automatic token refresh every 10 minutes (before the 15-minute token expiry)
-    const refreshInterval = setInterval(() => {
+      // Only restore session if user was previously logged in
       if (localStorage.getItem('selene_logged_in') === 'true') {
+        await checkSession();
+      }
+    };
+    init();
+
+    // Refresh token every 10 minutes
+    const interval = setInterval(() => {
+      if (!isAuthenticating.current && localStorage.getItem('selene_logged_in') === 'true') {
         checkSession();
       }
     }, 10 * 60 * 1000);
 
-    return () => clearInterval(refreshInterval);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -192,14 +194,16 @@ function App() {
   };
 
   const handleLoginSuccess = (name, tokenVal, userVal) => {
+    isAuthenticating.current = true;   // block any in-flight checkSession
     setUsername(name || 'user');
     setToken(tokenVal || '');
     setUser(userVal || null);
     localStorage.setItem('selene_logged_in', 'true');
-    
     const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
     setIsUnlocked(!camo);
     setView('dashboard');
+    // Allow checkSession again after a brief window
+    setTimeout(() => { isAuthenticating.current = false; }, 2000);
   };
 
   const isFullScreenView = view === 'dashboard' || view === 'calendar' || view === 'settings';
