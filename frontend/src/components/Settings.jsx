@@ -8,7 +8,7 @@ const getCookie = (name) => {
   return '';
 };
 
-export default function Settings({ username = 'user', setView, token, user, setUser, onLogout }) {
+export default function Settings({ username = 'user', setView, token, user, setUser, onLogout, showToast }) {
   // Profile
   const [displayName, setDisplayName] = useState(user?.username || username);
   const [cycleLength, setCycleLength] = useState(user?.cycle_length_baseline || 28);
@@ -90,7 +90,8 @@ export default function Settings({ username = 'user', setView, token, user, setU
 
   const handleSave = async () => {
     if (!token) {
-      alert("Please log in to save settings.");
+      if (showToast) showToast("Please log in to save settings.", "error");
+      else alert("Please log in to save settings.");
       return;
     }
     
@@ -112,24 +113,57 @@ export default function Settings({ username = 'user', setView, token, user, setU
       });
       const data = await response.json();
       if (response.ok) {
-        alert('Settings saved successfully! ✨');
+        if (showToast) showToast('Settings saved successfully! ✨', 'success');
+        else alert('Settings saved successfully! ✨');
         if (setUser && data.user) {
           setUser(data.user);
-          localStorage.setItem('selene_user', JSON.stringify(data.user));
         }
       } else {
-        alert(data.error || 'Failed to save settings.');
+        if (showToast) showToast(data.error || 'Failed to save settings.', 'error');
+        else alert(data.error || 'Failed to save settings.');
       }
     } catch (e) {
       console.error(e);
-      alert('Network error. Failed to save settings.');
+      if (showToast) showToast('Network error. Failed to save settings.', 'error');
+      else alert('Network error. Failed to save settings.');
+    }
+  };
+
+  const handleExportData = async () => {
+    if (!token) {
+      if (showToast) showToast("Please log in to export settings.", "error");
+      else alert("Please log in to export settings.");
+      return;
+    }
+    try {
+      const response = await fetch('/api/logs/export', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) throw new Error("Export failed");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `selene_export_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      if (showToast) showToast("Data exported successfully! 📥", "success");
+    } catch (err) {
+      console.error(err);
+      if (showToast) showToast("Failed to export data", "error");
+      else alert("Failed to export data");
     }
   };
 
   const handleDeleteData = async () => {
     if (showDeleteConfirm) {
       if (!token) {
-        alert("Please log in first.");
+        if (showToast) showToast("Please log in first.", "error");
+        else alert("Please log in first.");
         return;
       }
       try {
@@ -142,15 +176,18 @@ export default function Settings({ username = 'user', setView, token, user, setU
         });
         const data = await response.json();
         if (response.ok) {
-          alert('Your account and all associated data have been permanently erased.');
+          if (showToast) showToast('Your account and all associated data have been permanently erased.', 'success');
+          else alert('Your account and all associated data have been permanently erased.');
           setShowDeleteConfirm(false);
           onLogout();
         } else {
-          alert(data.error || 'Failed to delete account.');
+          if (showToast) showToast(data.error || 'Failed to delete account.', 'error');
+          else alert(data.error || 'Failed to delete account.');
         }
       } catch (e) {
         console.error(e);
-        alert('Network error. Failed to erase account.');
+        if (showToast) showToast('Network error. Failed to erase account.', 'error');
+        else alert('Network error. Failed to erase account.');
       }
     } else {
       setShowDeleteConfirm(true);
@@ -381,6 +418,7 @@ export default function Settings({ username = 'user', setView, token, user, setU
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
+              onClick={handleExportData}
               className="flex-1 bg-[#1e2722] text-white font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md hover:bg-[#2a3830] transition-colors duration-200 cursor-pointer focus:outline-none"
             >
               Export My Data

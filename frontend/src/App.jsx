@@ -10,7 +10,7 @@ import Register from './components/Register';
 import Dashboard from './components/Dashboard';
 import CalendarView from './components/CalendarView';
 import Settings from './components/Settings';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 
 const getCookie = (name) => {
@@ -32,14 +32,28 @@ function App() {
   };
 
   const [view, setViewInternal] = useState(getInitialView);
-  const [token, setToken] = useState(localStorage.getItem('selene_token') || '');
-  const [user, setUser] = useState(JSON.parse(localStorage.getItem('selene_user') || 'null'));
-  const [username, setUsername] = useState(localStorage.getItem('selene_username') || 'user');
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type });
+  };
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => {
+        setToast(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+  const [token, setToken] = useState('');
+  const [user, setUser] = useState(null);
+  const [username, setUsername] = useState('user');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [isUnlocked, setIsUnlocked] = useState(() => {
     const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
-    const storedToken = localStorage.getItem('selene_token');
-    return !storedToken || !camo;
+    const loggedIn = localStorage.getItem('selene_logged_in') === 'true';
+    return !loggedIn || !camo;
   });
 
   // Apply readability class to document body based on local storage setting on boot
@@ -54,13 +68,11 @@ function App() {
 
   const handleLogout = async () => {
     try {
-      const storedToken = localStorage.getItem('selene_token');
       await fetch('/api/auth/logout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-CSRF-Token': getCookie('csrf_token'),
-          ...(storedToken ? { 'Authorization': `Bearer ${storedToken}` } : {})
+          'X-CSRF-Token': getCookie('csrf_token')
         },
         credentials: 'include'
       });
@@ -71,44 +83,48 @@ function App() {
     setToken('');
     setUser(null);
     setIsUnlocked(true);
-    localStorage.removeItem('selene_username');
-    localStorage.removeItem('selene_token');
-    localStorage.removeItem('selene_user');
+    localStorage.removeItem('selene_logged_in');
     setView('landing');
   };
 
-  useEffect(() => {
-    const checkSession = async () => {
-      const storedToken = localStorage.getItem('selene_token');
-      if (storedToken) {
-        try {
-          const response = await fetch('/api/auth/refresh', {
-            method: 'POST',
-            headers: {
-              'X-CSRF-Token': getCookie('csrf_token')
-            },
-            credentials: 'include'
-          });
-          const data = await response.json();
-          if (response.ok) {
-            setToken(data.token);
-            setUser(data.user);
-            setUsername(data.user.username);
-            localStorage.setItem('selene_token', data.token);
-            localStorage.setItem('selene_user', JSON.stringify(data.user));
-            localStorage.setItem('selene_username', data.user.username);
-            
-            const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
-            setIsUnlocked(!camo);
-          } else {
-            handleLogout();
-          }
-        } catch (e) {
-          console.error("Session check failed", e);
-        }
+  const checkSession = async () => {
+    try {
+      const response = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': getCookie('csrf_token')
+        },
+        credentials: 'include'
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setToken(data.token);
+        setUser(data.user);
+        setUsername(data.user.username);
+        localStorage.setItem('selene_logged_in', 'true');
+        
+        const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
+        setIsUnlocked(!camo);
+      } else {
+        handleLogout();
       }
-    };
+    } catch (e) {
+      console.error("Session check failed", e);
+    }
+  };
+
+  useEffect(() => {
+    // Run checkSession on boot
     checkSession();
+
+    // Automatic token refresh every 10 minutes (before the 15-minute token expiry)
+    const refreshInterval = setInterval(() => {
+      if (localStorage.getItem('selene_logged_in') === 'true') {
+        checkSession();
+      }
+    }, 10 * 60 * 1000);
+
+    return () => clearInterval(refreshInterval);
   }, []);
 
   useEffect(() => {
@@ -151,9 +167,7 @@ function App() {
     setUsername(name || 'user');
     setToken(tokenVal || '');
     setUser(userVal || null);
-    localStorage.setItem('selene_username', name || 'user');
-    localStorage.setItem('selene_token', tokenVal || '');
-    localStorage.setItem('selene_user', JSON.stringify(userVal || null));
+    localStorage.setItem('selene_logged_in', 'true');
     
     const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
     setIsUnlocked(!camo);
@@ -179,16 +193,40 @@ function App() {
           <Footer />
         </>
       ) : view === 'login' ? (
-        <Login setView={setView} onLoginSuccess={handleLoginSuccess} />
+        <Login setView={setView} onLoginSuccess={handleLoginSuccess} showToast={showToast} />
       ) : view === 'register' ? (
-        <Register setView={setView} onLoginSuccess={handleLoginSuccess} />
+        <Register setView={setView} onLoginSuccess={handleLoginSuccess} showToast={showToast} />
       ) : view === 'calendar' ? (
         <CalendarView username={username} setView={setView} token={token} user={user} onLogout={handleLogout} selectedDate={selectedDate} setSelectedDate={setSelectedDate} />
       ) : view === 'settings' ? (
-        <Settings username={username} setView={setView} token={token} user={user} setUser={setUser} onLogout={handleLogout} />
+        <Settings username={username} setView={setView} token={token} user={user} setUser={setUser} onLogout={handleLogout} showToast={showToast} />
       ) : (
-        <Dashboard username={username} setView={setView} token={token} user={user} onLogout={handleLogout} selectedDate={selectedDate} setSelectedDate={setSelectedDate} />
+        <Dashboard username={username} setView={setView} token={token} user={user} onLogout={handleLogout} selectedDate={selectedDate} setSelectedDate={setSelectedDate} showToast={showToast} />
       )}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 px-6 py-3.5 rounded-2xl shadow-xl flex items-center gap-3 backdrop-blur-md border ${
+              toast.type === 'success'
+                ? 'bg-emerald-500/90 text-white border-emerald-400/30'
+                : toast.type === 'error'
+                ? 'bg-red-500/90 text-white border-red-400/30'
+                : 'bg-stone-800/95 text-white border-stone-700/30'
+            }`}
+          >
+            <span className="font-handwriting text-xl font-bold tracking-wide">{toast.message}</span>
+            <button
+              onClick={() => setToast(null)}
+              className="text-white/60 hover:text-white font-sans text-lg ml-2 cursor-pointer focus:outline-none"
+            >
+              ✕
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

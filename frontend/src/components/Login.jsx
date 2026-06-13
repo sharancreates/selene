@@ -8,10 +8,16 @@ const getCookie = (name) => {
   return '';
 };
 
-export default function Login({ setView, onLoginSuccess }) {
+export default function Login({ setView, onLoginSuccess, showToast }) {
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+
+  // PIN reset flow state
+  const [isResetting, setIsResetting] = useState(false);
+  const [recoveryKey, setRecoveryKey] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   const validateForm = () => {
     if (!username.trim()) {
@@ -51,6 +57,42 @@ export default function Login({ setView, onLoginSuccess }) {
         }
       } else {
         setError(data.error || 'Login failed');
+      }
+    } catch (err) {
+      setError('Network error. Please try again.');
+    }
+  };
+
+  const handleResetSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+
+    if (!username.trim() || !recoveryKey.trim() || newPin.length < 6) {
+      setError('All fields are required. PIN must be at least 6 characters.');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/auth/reset-pin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': getCookie('csrf_token')
+        },
+        credentials: 'include',
+        body: JSON.stringify({ username, recovery_key: recoveryKey, new_pin: newPin })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setSuccessMessage('PIN reset successfully! You can now log in.');
+        if (showToast) showToast('PIN reset successfully! ✨', 'success');
+        setIsResetting(false);
+        setRecoveryKey('');
+        setNewPin('');
+      } else {
+        setError(data.error || 'PIN reset failed. Check your recovery key.');
       }
     } catch (err) {
       setError('Network error. Please try again.');
@@ -151,77 +193,151 @@ export default function Login({ setView, onLoginSuccess }) {
             </svg>
           </motion.div>
 
-{/* Login Card */}
-           <motion.div 
-             initial={{ opacity: 0, y: 30 }}
-             animate={{ opacity: 1, y: 0 }}
-             transition={{ duration: 0.8, delay: 0.2, type: "spring", stiffness: 60 }}
-             className="relative z-20 w-[310px] sm:w-[350px] bg-[#df9b6d] rounded-[2.5rem] p-8 sm:p-10 shadow-2xl border border-white/10 flex flex-col justify-between"
-           >
-             {error && (
-               <div className="absolute -top-12 left-0 right-0 bg-red-500 text-white font-handwriting text-lg px-4 py-2 rounded-xl text-center">
-                 {error}
-               </div>
-             )}
-             <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-              
-              <h3 className="font-handwriting text-black text-center text-4xl sm:text-5xl tracking-wide mb-2 uppercase font-bold">
-                LOG IN
-              </h3>
+          {isResetting ? (
+            /* Reset PIN Card */
+            <motion.div
+              key="reset"
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2, type: "spring", stiffness: 60 }}
+              className="relative z-20 w-[310px] sm:w-[350px] bg-[#df9b6d] rounded-[2.5rem] p-8 sm:p-10 shadow-2xl border border-white/10 flex flex-col justify-between"
+            >
+              {error && (
+                <div className="absolute -top-12 left-0 right-0 bg-red-500 text-white font-handwriting text-lg px-4 py-2 rounded-xl text-center">
+                  {error}
+                </div>
+              )}
+              <form onSubmit={handleResetSubmit} className="flex flex-col gap-4">
+                <h3 className="font-handwriting text-black text-center text-3xl tracking-wide mb-1 uppercase font-bold">
+                  RESET PIN
+                </h3>
 
-              {/* Username field */}
-              <div className="flex flex-col gap-2">
-                <label className="font-handwriting text-black text-2xl sm:text-3xl pl-1">
-                  Username:
-                </label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-handwriting text-xl sm:text-2xl px-4 py-2.5 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
-                />
-              </div>
+                {/* Username field */}
+                <div className="flex flex-col gap-1">
+                  <label className="font-handwriting text-black text-xl pl-1">Username:</label>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-handwriting text-lg px-4 py-1.5 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
+                  />
+                </div>
 
-              {/* PIN field */}
-              <div className="flex flex-col gap-2 pb-6">
-                <label className="font-handwriting text-black text-2xl sm:text-3xl pl-1">
-                  PIN:
-                </label>
-                <input
-                  type="password"
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value)}
-                  className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-handwriting text-xl sm:text-2xl px-4 py-2.5 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
-                />
-              </div>
+                {/* Recovery Key field */}
+                <div className="flex flex-col gap-1">
+                  <label className="font-handwriting text-black text-xl pl-1">Recovery Key:</label>
+                  <input
+                    type="text"
+                    value={recoveryKey}
+                    onChange={(e) => setRecoveryKey(e.target.value)}
+                    className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-handwriting text-lg px-4 py-1.5 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
+                  />
+                </div>
 
-              {/* GO Button (Overlapping circular button) */}
-              <motion.button
-                type="submit"
-                whileHover={{ scale: 1.08 }}
-                whileTap={{ scale: 0.95 }}
-                className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-16 h-16 rounded-full bg-[#d2d2d2] hover:bg-white text-black font-handwriting text-2xl font-bold flex items-center justify-center shadow-xl border border-[#df9b6d] focus:outline-none transition-colors duration-200 cursor-pointer"
-              >
-                GO
-              </motion.button>
+                {/* New PIN field */}
+                <div className="flex flex-col gap-1 pb-4">
+                  <label className="font-handwriting text-black text-xl pl-1">New PIN:</label>
+                  <input
+                    type="password"
+                    value={newPin}
+                    onChange={(e) => setNewPin(e.target.value)}
+                    className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-handwriting text-lg px-4 py-1.5 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
+                  />
+                </div>
 
-            </form>
-          </motion.div>
+                {/* RESET Button */}
+                <motion.button
+                  type="submit"
+                  whileHover={{ scale: 1.08 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-20 h-16 rounded-full bg-[#d2d2d2] hover:bg-white text-black font-handwriting text-xl font-bold flex items-center justify-center shadow-xl border border-[#df9b6d] focus:outline-none transition-colors duration-200 cursor-pointer"
+                >
+                  RESET
+                </motion.button>
+              </form>
+            </motion.div>
+          ) : (
+            /* Login Card */
+            <motion.div
+              key="login"
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2, type: "spring", stiffness: 60 }}
+              className="relative z-20 w-[310px] sm:w-[350px] bg-[#df9b6d] rounded-[2.5rem] p-8 sm:p-10 shadow-2xl border border-white/10 flex flex-col justify-between"
+            >
+              {error && (
+                <div className="absolute -top-12 left-0 right-0 bg-red-500 text-white font-handwriting text-lg px-4 py-2 rounded-xl text-center">
+                  {error}
+                </div>
+              )}
+              <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+                <h3 className="font-handwriting text-black text-center text-4xl sm:text-5xl tracking-wide mb-2 uppercase font-bold">
+                  LOG IN
+                </h3>
+
+                {/* Username field */}
+                <div className="flex flex-col gap-2">
+                  <label className="font-handwriting text-black text-2xl sm:text-3xl pl-1">
+                    Username:
+                  </label>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-handwriting text-xl sm:text-2xl px-4 py-2.5 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
+                  />
+                </div>
+
+                {/* PIN field */}
+                <div className="flex flex-col gap-2 pb-6">
+                  <label className="font-handwriting text-black text-2xl sm:text-3xl pl-1">
+                    PIN:
+                  </label>
+                  <input
+                    type="password"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value)}
+                    className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-handwriting text-xl sm:text-2xl px-4 py-2.5 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
+                  />
+                </div>
+
+                {/* GO Button (Overlapping circular button) */}
+                <motion.button
+                  type="submit"
+                  whileHover={{ scale: 1.08 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-16 h-16 rounded-full bg-[#d2d2d2] hover:bg-white text-black font-handwriting text-2xl font-bold flex items-center justify-center shadow-xl border border-[#df9b6d] focus:outline-none transition-colors duration-200 cursor-pointer"
+                >
+                  GO
+                </motion.button>
+              </form>
+            </motion.div>
+          )}
         </div>
 
         {/* Links under Form */}
         <div className="flex flex-col items-center gap-3 mt-12">
-          <motion.button 
+          {successMessage && (
+            <div className="text-emerald-800 font-handwriting text-xl text-center mb-2 font-bold">
+              {successMessage}
+            </div>
+          )}
+
+          <motion.button
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5, delay: 0.6 }}
             className="text-black hover:text-[#865538] font-handwriting text-2xl underline focus:outline-none transition-colors duration-200 cursor-pointer"
-            onClick={() => alert('PIN reset flow placeholder')}
+            onClick={() => {
+              setError('');
+              setSuccessMessage('');
+              setIsResetting(!isResetting);
+            }}
           >
-            forget pin
+            {isResetting ? "back to login" : "forget pin"}
           </motion.button>
           
-          <motion.button 
+          <motion.button
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5, delay: 0.7 }}
@@ -234,13 +350,12 @@ export default function Login({ setView, onLoginSuccess }) {
       </div>
 
       {/* Girl Illustration Placeholder - Bottom Right */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, x: 50 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.8, delay: 0.4 }}
         className="absolute bottom-0 right-0 w-[240px] h-[240px] sm:w-[320px] sm:h-[320px] pointer-events-none select-none z-20"
       >
-        {/* Placeholder rendering a gorgeous clean representation of the girl reading a book */}
         <div className="w-full h-full flex items-end justify-end p-4">
           <div className="border-2 border-dashed border-[var(--color-selene-brown)]/40 bg-[var(--color-selene-beige)]/90 backdrop-blur-sm rounded-3xl p-6 flex flex-col items-center justify-center text-center shadow-lg w-[85%] h-[75%] sm:w-[80%] sm:h-[70%]">
             <svg viewBox="0 0 24 24" className="w-12 h-12 text-[var(--color-selene-brown)] mb-2" fill="none" stroke="currentColor" strokeWidth="1.5">

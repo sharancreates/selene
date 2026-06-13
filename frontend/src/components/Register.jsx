@@ -6,13 +6,13 @@ const getCookie = (name) => {
   const parts = value.split(`; ${name}=`);
   if (parts.length === 2) return parts.pop().split(';').shift();
   return '';
-};
-
-export default function Register({ setView, onLoginSuccess }) {
+};export default function Register({ setView, onLoginSuccess, showToast }) {
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState('');
+  const [recoveryKey, setRecoveryKey] = useState('');
+  const [regUserData, setRegUserData] = useState(null);
   
   // Selected conditions
   const [conditions, setConditions] = useState({
@@ -22,7 +22,6 @@ export default function Register({ setView, onLoginSuccess }) {
   });
 
   const [camouflageMode, setCamouflageMode] = useState(false);
-
   const handleToggleCondition = (key) => {
     setConditions(prev => ({
       ...prev,
@@ -75,9 +74,8 @@ export default function Register({ setView, onLoginSuccess }) {
       
       const data = await response.json();
       if (response.ok) {
-        if (onLoginSuccess) {
-          onLoginSuccess(data.user.username, data.token, data.user);
-        }
+        setRegUserData(data.user);
+        setRecoveryKey(data.recovery_key);
       } else {
         setError(data.error || 'Registration failed');
       }
@@ -85,6 +83,42 @@ export default function Register({ setView, onLoginSuccess }) {
       setError('Network error. Please try again.');
     }
   };
+
+  if (recoveryKey) {
+    return (
+      <section className="relative w-full min-h-screen bg-[var(--color-selene-beige)] flex flex-col items-center justify-center px-6 py-24 overflow-hidden">
+        <div className="relative z-10 w-full max-w-lg bg-[#df9b6d] rounded-[2.5rem] p-8 sm:p-10 shadow-2xl border border-white/10 flex flex-col items-center text-center">
+          <h3 className="text-3xl font-black text-black mb-4 font-serif">Save Your Recovery Key</h3>
+          <p className="text-sm text-black mb-6 leading-relaxed">
+            This recovery key is the <strong>only way</strong> to reset your PIN if you forget it. We store it using secure server-side one-way hashes, so we cannot recover it for you.
+          </p>
+          <div className="w-full bg-white/20 border border-white/30 rounded-2xl p-4 mb-6 font-mono text-black text-center break-all select-all font-semibold">
+            {recoveryKey}
+          </div>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(recoveryKey);
+              if (showToast) showToast("Recovery key copied to clipboard! 📋", "success");
+              else alert("Recovery key copied to clipboard!");
+            }}
+            className="w-full bg-[#8ba68b] hover:bg-[#7a957a] text-black font-extrabold py-3 rounded-full transition-all duration-300 transform hover:scale-105 shadow-md mb-4 flex items-center justify-center gap-2"
+          >
+            Copy Recovery Key
+          </button>
+          <button
+            onClick={() => {
+              if (onLoginSuccess) {
+                onLoginSuccess(regUserData.username, null, regUserData);
+              }
+            }}
+            className="w-full bg-black hover:bg-neutral-800 text-white font-extrabold py-3 rounded-full transition-all duration-300 transform hover:scale-105 shadow-md"
+          >
+            I have saved my recovery key
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="relative w-full min-h-screen bg-[var(--color-selene-beige)] flex flex-col items-center justify-center px-6 py-24 overflow-hidden">
