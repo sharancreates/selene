@@ -13,6 +13,7 @@ const getCookie = (name) => {
   const [error, setError] = useState('');
   const [recoveryKey, setRecoveryKey] = useState('');
   const [regUserData, setRegUserData] = useState(null);
+  const [regToken, setRegToken] = useState('');
   
   // Selected conditions
   const [conditions, setConditions] = useState({
@@ -75,6 +76,7 @@ const getCookie = (name) => {
       const data = await response.json();
       if (response.ok) {
         setRegUserData(data.user);
+        setRegToken(data.token || '');
         setRecoveryKey(data.recovery_key);
       } else {
         setError(data.error || 'Registration failed');
@@ -108,7 +110,7 @@ const getCookie = (name) => {
           <button
             onClick={() => {
               if (onLoginSuccess) {
-                onLoginSuccess(regUserData.username, null, regUserData);
+                onLoginSuccess(regUserData.username, regToken, regUserData);
               }
             }}
             className="w-full bg-black hover:bg-neutral-800 text-white font-extrabold py-3 rounded-full transition-all duration-300 transform hover:scale-105 shadow-md"

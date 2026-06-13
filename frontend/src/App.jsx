@@ -114,10 +114,13 @@ function App() {
   };
 
   useEffect(() => {
-    // Run checkSession on boot
+    // 1. Seed the CSRF token cookie on every app load (GET — no CSRF needed)
+    fetch('/api/auth/csrf', { credentials: 'include' }).catch(() => {});
+
+    // 2. Restore active session from refresh cookie
     checkSession();
 
-    // Automatic token refresh every 10 minutes (before the 15-minute token expiry)
+    // 3. Automatic token refresh every 10 minutes (before the 15-minute token expiry)
     const refreshInterval = setInterval(() => {
       if (localStorage.getItem('selene_logged_in') === 'true') {
         checkSession();
