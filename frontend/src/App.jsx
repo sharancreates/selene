@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import Hero from './components/Hero';
+import { deriveKeyFromPin } from './utils/crypto';
 import ValueProposition from './components/ValueProposition';
 import CamouflageSection from './components/CamouflageSection';
 import Component4 from './components/Component4';
@@ -199,8 +200,9 @@ function App() {
     setToken(tokenVal || '');
     setUser(userVal || null);
     localStorage.setItem('selene_logged_in', 'true');
-    const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
-    setIsUnlocked(!camo);
+    // const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
+    // setIsUnlocked(!camo);
+    setIsUnlocked(true);
     setView('dashboard');
     // Allow checkSession again after a brief window
     setTimeout(() => { isAuthenticating.current = false; }, 2000);
@@ -209,7 +211,7 @@ function App() {
   const isFullScreenView = view === 'dashboard' || view === 'calendar' || view === 'settings';
 
   if (!isUnlocked && token) {
-    return <CalculatorGuard token={token} onUnlock={() => setIsUnlocked(true)} />;
+    return <CalculatorGuard token={token} username={username} onUnlock={() => setIsUnlocked(true)} />;
   }
 
   return (
@@ -403,7 +405,7 @@ function evaluateSafeMath(expr) {
   return res;
 }
 
-function CalculatorGuard({ token, onUnlock }) {
+function CalculatorGuard({ token, username, onUnlock }) {
   const [display, setDisplay] = useState('0');
   const [equation, setEquation] = useState('');
 
@@ -415,6 +417,7 @@ function CalculatorGuard({ token, onUnlock }) {
       const trimmed = display.trim();
       if (/^\d{6,}$/.test(trimmed)) {
         try {
+          const kek_pin = await deriveKeyFromPin(trimmed, username);
           const response = await fetch('/api/auth/verify-pin', {
             method: 'POST',
             headers: {
@@ -422,7 +425,7 @@ function CalculatorGuard({ token, onUnlock }) {
               'Authorization': `Bearer ${token}`,
               'X-CSRF-Token': getCookie('csrf_token')
             },
-            body: JSON.stringify({ pin: trimmed })
+            body: JSON.stringify({ pin: trimmed, kek_pin })
           });
           const data = await response.json();
           if (response.ok && data.unlocked) {

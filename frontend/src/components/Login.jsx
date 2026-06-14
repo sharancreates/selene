@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
+import { deriveKeyFromPin } from '../utils/crypto';
 
 const getCookie = (name) => {
   const value = `; ${document.cookie}`;
@@ -18,6 +19,11 @@ export default function Login({ setView, onLoginSuccess, showToast }) {
   const [recoveryKey, setRecoveryKey] = useState('');
   const [newPin, setNewPin] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+
+  // Legacy migration recovery display state
+  const [showRecoveryKeyScreen, setShowRecoveryKeyScreen] = useState(false);
+  const [regUserData, setRegUserData] = useState(null);
+  const [regToken, setRegToken] = useState('');
 
   const validateForm = () => {
     if (!username.trim()) {
@@ -40,6 +46,7 @@ export default function Login({ setView, onLoginSuccess, showToast }) {
     }
     
     try {
+      const kek_pin = await deriveKeyFromPin(pin, username);
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 
@@ -47,13 +54,20 @@ export default function Login({ setView, onLoginSuccess, showToast }) {
           'X-CSRF-Token': getCookie('csrf_token')
         },
         credentials: 'include',
-        body: JSON.stringify({ username, pin })
+        body: JSON.stringify({ username, pin, kek_pin })
       });
       
       const data = await response.json();
       if (response.ok) {
-        if (onLoginSuccess) {
-          onLoginSuccess(data.user.username, data.token, data.user);
+        if (data.recovery_key) {
+          setRecoveryKey(data.recovery_key);
+          setRegUserData(data.user);
+          setRegToken(data.token || '');
+          setShowRecoveryKeyScreen(true);
+        } else {
+          if (onLoginSuccess) {
+            onLoginSuccess(data.user.username, data.token, data.user);
+          }
         }
       } else {
         setError(data.error || 'Login failed');
@@ -74,6 +88,7 @@ export default function Login({ setView, onLoginSuccess, showToast }) {
     }
 
     try {
+      const new_kek_pin = await deriveKeyFromPin(newPin, username);
       const response = await fetch('/api/auth/reset-pin', {
         method: 'POST',
         headers: {
@@ -81,7 +96,12 @@ export default function Login({ setView, onLoginSuccess, showToast }) {
           'X-CSRF-Token': getCookie('csrf_token')
         },
         credentials: 'include',
-        body: JSON.stringify({ username, recovery_key: recoveryKey, new_pin: newPin })
+        body: JSON.stringify({ 
+          username, 
+          recovery_key: recoveryKey, 
+          new_pin: newPin,
+          new_kek_pin 
+        })
       });
 
       const data = await response.json();
@@ -98,6 +118,42 @@ export default function Login({ setView, onLoginSuccess, showToast }) {
       setError('Network error. Please try again.');
     }
   };
+
+  if (showRecoveryKeyScreen) {
+    return (
+      <section className="relative w-full min-h-screen bg-[var(--color-selene-beige)] flex flex-col items-center justify-center px-6 py-24 overflow-hidden">
+        <div className="relative z-10 w-full max-w-lg bg-[#df9b6d] rounded-[2.5rem] p-8 sm:p-10 shadow-2xl border border-white/10 flex flex-col items-center text-center">
+          <h3 className="text-3xl font-black text-black mb-4 font-serif">Save Your Recovery Key</h3>
+          <p className="text-sm text-black mb-6 leading-relaxed">
+            This recovery key is the <strong>only way</strong> to reset your PIN if you forget it. We store it using secure server-side one-way hashes, so we cannot recover it for you.
+          </p>
+          <div className="w-full bg-white/20 border border-white/30 rounded-2xl p-4 mb-6 font-mono text-black text-center break-all select-all font-semibold">
+            {recoveryKey}
+          </div>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(recoveryKey);
+              if (showToast) showToast("Recovery key copied to clipboard! 📋", "success");
+              else alert("Recovery key copied to clipboard!");
+            }}
+            className="w-full bg-[#8ba68b] hover:bg-[#7a957a] text-black font-extrabold py-3 rounded-full transition-all duration-300 transform hover:scale-105 shadow-md mb-4 flex items-center justify-center gap-2"
+          >
+            Copy Recovery Key
+          </button>
+          <button
+            onClick={() => {
+              if (onLoginSuccess) {
+                onLoginSuccess(regUserData.username, regToken, regUserData);
+              }
+            }}
+            className="w-full bg-black hover:bg-neutral-800 text-white font-extrabold py-3 rounded-full transition-all duration-300 transform hover:scale-105 shadow-md"
+          >
+            I have saved my recovery key
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="relative w-full min-h-screen bg-[var(--color-selene-beige)] flex flex-col items-center justify-center px-6 py-20 overflow-hidden">

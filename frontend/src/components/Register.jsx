@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
+import { deriveKeyFromPin } from '../utils/crypto';
 
 const getCookie = (name) => {
   const value = `; ${document.cookie}`;
@@ -55,6 +56,7 @@ const getCookie = (name) => {
     }
     
     try {
+      const kek_pin = await deriveKeyFromPin(pin, username);
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 
@@ -65,6 +67,7 @@ const getCookie = (name) => {
         body: JSON.stringify({
           username,
           pin,
+          kek_pin,
           cycle_length_baseline: 28,
           period_length_baseline: 5,
           has_pcos: conditions.pcos,
@@ -73,8 +76,19 @@ const getCookie = (name) => {
         })
       });
       
+      // const data = await response.json();
+      // if (response.ok) {
+      //   setRegUserData(data.user);
+      //   setRegToken(data.token || '');
+      //   setRecoveryKey(data.recovery_key);
+      // } else {
+      //   setError(data.error || 'Registration failed');
+      // }
       const data = await response.json();
       if (response.ok) {
+        // ADD this line to persist the camouflage mode setting
+        localStorage.setItem('selene_camouflage_mode', camouflageMode ? 'true' : 'false');
+        
         setRegUserData(data.user);
         setRegToken(data.token || '');
         setRecoveryKey(data.recovery_key);

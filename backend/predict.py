@@ -2,8 +2,11 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
+import logging
 from datetime import datetime, date, timedelta
 from flask import Blueprint, request, jsonify, g
+
+logger = logging.getLogger(__name__)
 
 # Robust imports supporting direct script execution or package import
 try:
@@ -82,7 +85,7 @@ def predict_next_cycle():
                 
             except Exception as ml_err:
                 # Log model error and allow execution to fall back to regression engine
-                print(f"ML Model inference warning: {str(ml_err)}. Falling back to mathematical heuristics.")
+                logger.warning(f"ML Model inference warning: {str(ml_err)}. Falling back to mathematical heuristics.")
 
         # 4. Fallback Regression Engine: Analyze logs to identify cycles
         # Identify period starts (transition to menstrual phase)
@@ -195,7 +198,7 @@ def get_insights():
         insights_data = generate_insights(g.user)
         return jsonify(insights_data), 200
     except Exception as err:
-        print(f"Error executing insights engine: {str(err)}")
+        logger.error(f"Error executing insights engine: {str(err)}")
         return jsonify({
             "insights": [
                 {

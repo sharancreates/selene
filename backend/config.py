@@ -26,11 +26,18 @@ class Config:
     # Debug mode - disabled by default for security
     DEBUG = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     
-    # Production cookie security flags
+    # Cookie security flags
     SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'true').lower() == 'true'
     REMEMBER_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True
 
+    # Redis connection URL
+    REDIS_URL = os.environ.get('REDIS_URL')
+    
+    # Rate Limiter storage uri
+    RATELIMIT_STORAGE_URI = REDIS_URL or 'memory://'
+
 
 class ProductionConfig(Config):
     DEBUG = False
+

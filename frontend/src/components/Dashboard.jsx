@@ -460,6 +460,9 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
   const bleedingDays = getConsecutiveBleedingDays();
   const isMenorrhagiaDetected = (user?.has_pcos || user?.has_endo) && bleedingDays >= 10;
 
+  const xTicks = [1, 5, 10, 14, 20, 25, 28]; 
+  const yTicks = [97.0, 97.5, 98.0, 98.5, 99.0];
+
   return (
     <motion.div 
       className="w-full min-h-screen flex flex-col font-sans transition-colors duration-500"

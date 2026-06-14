@@ -516,8 +516,8 @@ class SeleneBackendTestCase(unittest.TestCase):
         token = res_reg.get_json()['token']
         headers = {'Authorization': f'Bearer {token}'}
 
-        # Mock check_password_hash in auth to raise an unhandled exception
-        with patch('auth.check_password_hash', side_effect=RuntimeError("Auth hash error simulation")):
+        # Mock verify_hash in auth to raise an unhandled exception
+        with patch('auth.verify_hash', side_effect=RuntimeError("Auth hash error simulation")):
             res = self.client.post('/api/auth/verify-pin', json={"pin": "123456"}, headers=headers)
             self.assertEqual(res.status_code, 500)
             data = res.get_json()
@@ -525,84 +525,74 @@ class SeleneBackendTestCase(unittest.TestCase):
 
     def test_key_rotation_and_data_preservation(self):
         """
-        Verifies key rotation successfully decrypts with the old key,
-        re-encrypts with the new key, preserves correct data, and changes ciphertext.
+        Verifies legacy user migration successfully decrypts with the old key,
+        re-encrypts with the new user-specific DEK, preserves correct data, and changes ciphertext.
         """
-        import tempfile
-        import os
-        from rotate_key import rotate_keys
+        # 1. Register a legacy-style user (no encrypted_dek_pin or encrypted_dek_recovery)
+        from werkzeug.security import generate_password_hash
+        legacy_user = User(
+            username="legacy_rotator",
+            pin_hash=generate_password_hash("123456"),
+            recovery_hash=generate_password_hash("recovery-key-123"),
+            cycle_length_baseline=28,
+            period_length_baseline=5
+        )
+        db.session.add(legacy_user)
+        db.session.commit()
+
+        # 2. Insert a log entry manually encrypted under the old global key
+        from cryptography.fernet import Fernet
+        old_cipher = Fernet(b"p_Mh8N-YsKDORo4aEg5zYf51CJ8KD0qkmMDEOdrCVo4=")
         
-        # Create a temporary key file
-        fd, temp_key_path = tempfile.mkstemp()
-        os.close(fd)
+        # Insert raw encrypted fields directly into the DB using raw connection
+        connection = db.engine.raw_connection()
+        cursor = connection.cursor()
         
-        try:
-            # Write a valid initial key to this path
-            from cryptography.fernet import Fernet
-            initial_key = Fernet.generate_key().decode()
-            with open(temp_key_path, 'w') as f:
-                f.write(initial_key)
-                
-            # Temporarily set the active models.cipher_suite to match this initial key
-            import models
-            old_cipher_suite = models.cipher_suite
-            models.cipher_suite = Fernet(initial_key.encode())
+        raw_phase = old_cipher.encrypt(b"menstrual").decode()
+        raw_energy = old_cipher.encrypt(b"75").decode()
+        raw_temp = old_cipher.encrypt(b"98.4").decode()
+        
+        cursor.execute(
+            "INSERT INTO daily_logs (user_id, log_date, phase, energy_level, basal_body_temp) VALUES (?, ?, ?, ?, ?)",
+            (legacy_user.id, "2026-06-01", raw_phase, raw_energy, raw_temp)
+        )
+        connection.commit()
+        cursor.close()
+        connection.close()
 
-            reg_payload = {"username": "rotation_tester", "pin": "999999"}
-            res_reg = self.client.post('/api/auth/register', json=reg_payload)
-            token = res_reg.get_json()['token']
-            headers = {'Authorization': f'Bearer {token}'}
+        # 3. Log in with the legacy user. This should trigger the legacy migration
+        res_login = self.client.post('/api/auth/login', json={"username": "legacy_rotator", "pin": "123456"})
+        self.assertEqual(res_login.status_code, 200)
+        login_data = res_login.get_json()
+        self.assertIn("recovery_key", login_data)
+        
+        token = login_data['token']
+        headers = {'Authorization': f'Bearer {token}'}
 
-            log_payload = {
-                "log_date": "2026-06-01",
-                "phase": "menstrual",
-                "energy_level": 75,
-                "basal_body_temp": 98.4
-            }
-            self.client.post('/api/logs/sync', json=log_payload, headers=headers)
+        # 4. Verify that querying the logs returns correct decrypted data
+        res_logs = self.client.get('/api/logs', headers=headers)
+        self.assertEqual(res_logs.status_code, 200)
+        logs = res_logs.get_json()['logs']
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]['phase'], "menstrual")
+        self.assertEqual(logs[0]['energy_level'], 75)
+        self.assertEqual(logs[0]['basal_body_temp'], 98.4)
 
-            # Retrieve first raw ciphertexts
-            connection = db.engine.raw_connection()
-            cursor = connection.cursor()
-            cursor.execute("SELECT phase, energy_level, basal_body_temp FROM daily_logs LIMIT 1")
-            row = cursor.fetchone()
-            cursor.close()
-            connection.close()
-            
-            raw_phase_1, raw_energy_1, raw_temp_1 = row
-            self.assertTrue(raw_phase_1.startswith("gAAAAA"))
+        # 5. Retrieve new raw ciphertexts from the DB and verify that they are encrypted under the new key
+        connection = db.engine.raw_connection()
+        cursor = connection.cursor()
+        cursor.execute("SELECT phase, energy_level, basal_body_temp FROM daily_logs WHERE user_id = ?", (legacy_user.id,))
+        row_new = cursor.fetchone()
+        cursor.close()
+        connection.close()
 
-            # Run key rotation using the active testing app context and temp key path
-            rotate_keys(app=self.app, key_path=temp_key_path)
-
-            # Check that querying via models still returns correct decrypted data
-            log = DailyLog.query.filter_by(log_date=date(2026, 6, 1)).first()
-            self.assertEqual(log.phase, "menstrual")
-            self.assertEqual(log.energy_level, 75)
-            self.assertEqual(log.basal_body_temp, 98.4)
-
-            # Retrieve second raw ciphertexts
-            connection = db.engine.raw_connection()
-            cursor = connection.cursor()
-            cursor.execute("SELECT phase, energy_level, basal_body_temp FROM daily_logs LIMIT 1")
-            row_new = cursor.fetchone()
-            cursor.close()
-            connection.close()
-
-            raw_phase_2, raw_energy_2, raw_temp_2 = row_new
-            self.assertTrue(raw_phase_2.startswith("gAAAAA"))
-            
-            # Verify that ciphertexts are different because of the new key
-            self.assertNotEqual(raw_phase_1, raw_phase_2)
-            self.assertNotEqual(raw_energy_1, raw_energy_2)
-            self.assertNotEqual(raw_temp_1, raw_temp_2)
-            
-        finally:
-            # Clean up temp key file
-            if os.path.exists(temp_key_path):
-                os.remove(temp_key_path)
-            # Restore original models.cipher_suite
-            models.cipher_suite = old_cipher_suite
+        raw_phase_2, raw_energy_2, raw_temp_2 = row_new
+        self.assertTrue(raw_phase_2.startswith("gAAAAA"))
+        
+        # Verify that ciphertexts have changed
+        self.assertNotEqual(raw_phase, raw_phase_2)
+        self.assertNotEqual(raw_energy, raw_energy_2)
+        self.assertNotEqual(raw_temp, raw_temp_2)
 
     def test_username_length_validation(self):
         """
@@ -656,8 +646,150 @@ class SeleneBackendTestCase(unittest.TestCase):
             self.app.config['TESTING'] = True
 
 
+    def test_token_blacklist_and_cookies(self):
+        """
+        Verifies access_token and refresh_token are set as HttpOnly cookies,
+        and that logging out blacklists the tokens.
+        """
+        # Register a test user
+        register_payload = {"username": "cookieuser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        
+        # Verify access_token and refresh_token cookies are in headers
+        set_cookies = res.headers.getlist('Set-Cookie')
+        cookies = {c.split('=')[0].strip(): c.split('=')[1].split(';')[0].strip() for c in set_cookies if '=' in c}
+        self.assertIn('access_token', cookies)
+        self.assertIn('refresh_token', cookies)
+        
+        # Invalidate access_token via logout
+        res_logout = self.client.post('/api/auth/logout')
+        self.assertEqual(res_logout.status_code, 200)
+        
+        # Attempt to access logs with the logged-out access_token (Authorization fallback)
+        headers = {'Authorization': f"Bearer {cookies['access_token']}"}
+        res_profile = self.client.get('/api/logs', headers=headers)
+        self.assertEqual(res_profile.status_code, 401)
+        self.assertIn('revoked', res_profile.get_json()['error'])
+
+    def test_pin_reset_flow(self):
+        """
+        Verifies that registering returning a recovery key allows resetting PIN.
+        """
+        # 1. Register user
+        register_payload = {"username": "resetuser", "pin": "111111"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        data = res.get_json()
+        recovery_key = data.get('recovery_key')
+        self.assertTrue(recovery_key.startswith('selene-recovery-'))
+        
+        # 2. Reset PIN with invalid key
+        reset_payload_bad = {"username": "resetuser", "recovery_key": "wrongkey", "new_pin": "222222"}
+        res_reset_bad = self.client.post('/api/auth/reset-pin', json=reset_payload_bad)
+        self.assertEqual(res_reset_bad.status_code, 401)
+        
+        # 3. Reset PIN with valid key
+        reset_payload = {"username": "resetuser", "recovery_key": recovery_key, "new_pin": "222222"}
+        res_reset = self.client.post('/api/auth/reset-pin', json=reset_payload)
+        self.assertEqual(res_reset.status_code, 200)
+        
+        # 4. Verify login with new PIN works
+        login_payload = {"username": "resetuser", "pin": "222222"}
+        res_login = self.client.post('/api/auth/login', json=login_payload)
+        self.assertEqual(res_login.status_code, 200)
+
+    def test_log_pagination_and_export(self):
+        """
+        Verifies that daily logs support page and per_page pagination, and export.
+        """
+        # Register and login
+        register_payload = {"username": "paguser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        token = res.get_json()['token']
+        headers = {'Authorization': f"Bearer {token}"}
+        
+        # Sync 3 daily logs
+        for day in ['2026-06-01', '2026-06-02', '2026-06-03']:
+            payload = {"log_date": day, "phase": "menstrual", "flow_intensity": 50}
+            self.client.post('/api/logs/sync', json=payload, headers=headers)
+            
+        # Retrieve logs with page=1, per_page=2
+        res_pag = self.client.get('/api/logs?page=1&per_page=2', headers=headers)
+        self.assertEqual(res_pag.status_code, 200)
+        data = res_pag.get_json()
+        self.assertEqual(len(data['logs']), 2)
+        self.assertEqual(data['total'], 3)
+        self.assertEqual(data['pages'], 2)
+        
+        # Export logs
+        res_export = self.client.get('/api/logs/export', headers=headers)
+        self.assertEqual(res_export.status_code, 200)
+        self.assertIn('attachment; filename=selene_health_export.json', res_export.headers.get('Content-Disposition'))
+        export_data = res_export.get_json()
+        self.assertEqual(len(export_data['logs']), 3)
+        self.assertEqual(export_data['user']['username'], 'paguser')
+
+    def test_semantic_slider_fallbacks(self):
+        """
+        Verifies that non-menstrual sliders are stored in symptom_tags rather than database columns,
+        and that to_dict performs automatic fallback serialization.
+        """
+        # Register and login
+        register_payload = {"username": "slideruser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        token = res.get_json()['token']
+        headers = {'Authorization': f"Bearer {token}"}
+        
+        # Sync follicular log (focus=85, strength=75, glow=65)
+        # focus maps to flow_intensity, strength to pelvic_pain, glow to back_pain
+        payload = {
+            "log_date": "2026-06-01",
+            "phase": "follicular",
+            "flow_intensity": 85,
+            "pelvic_pain": 75,
+            "back_pain": 65
+        }
+        res_sync = self.client.post('/api/logs/sync', json=payload, headers=headers)
+        self.assertEqual(res_sync.status_code, 200)
+        
+        # Check raw database record using SQLAlchemy direct query
+        from models import DailyLog
+        log_records = DailyLog.query.all()
+        self.assertEqual(len(log_records), 1)
+        db_log = log_records[0]
+        
+        # Assert database columns are empty (null) to fix mismatch
+        self.assertIsNone(db_log.flow_intensity)
+        self.assertIsNone(db_log.pelvic_pain)
+        self.assertIsNone(db_log.back_pain)
+        
+        # Assert they are present in symptom_tags
+        self.assertEqual(db_log.symptom_tags['focus'], 85)
+        self.assertEqual(db_log.symptom_tags['strength'], 75)
+        self.assertEqual(db_log.symptom_tags['glow'], 65)
+        
+        # Assert to_dict() returns them correctly mapped to mimic original columns
+        serialized = db_log.to_dict()
+        self.assertEqual(serialized['flow_intensity'], 85)
+        self.assertEqual(serialized['pelvic_pain'], 75)
+        self.assertEqual(serialized['back_pain'], 65)
+        
+        # Test read fallback: manually populate columns and clear symptom_tags
+        # to simulate legacy records
+        db_log.flow_intensity = 40
+        db_log.pelvic_pain = 30
+        db_log.back_pain = 20
+        db_log.symptom_tags = {}
+        db.session.commit()
+        
+        serialized_legacy = db_log.to_dict()
+        self.assertEqual(serialized_legacy['flow_intensity'], 40)
+        self.assertEqual(serialized_legacy['pelvic_pain'], 30)
+        self.assertEqual(serialized_legacy['back_pain'], 20)
+
+
 if __name__ == '__main__':
     unittest.main()
-
-
-

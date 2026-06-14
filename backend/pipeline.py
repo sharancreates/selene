@@ -1,6 +1,10 @@
 import pandas as pd
 import numpy as np
+import logging
 from datetime import date
+
+# Set up module logger
+logger = logging.getLogger(__name__)
 
 # Import models supporting execution both as a package or direct script
 try:
@@ -109,5 +113,5 @@ def extract_log_dataframe(user_id):
 
     except Exception as e:
         # Return an empty DataFrame in case of unexpected structural errors
-        print(f"Error compiling DataFrame in preprocessing pipeline: {str(e)}")
+        logger.error(f"Error compiling DataFrame in preprocessing pipeline: {str(e)}")
         return pd.DataFrame()

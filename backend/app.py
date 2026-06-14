@@ -78,6 +78,24 @@ def create_app(config_class=Config):
                 secure=app.config.get('SESSION_COOKIE_SECURE', True),
                 httponly=False  # Must be read by React frontend JS
             )
+        
+        # Security headers
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        
+        # CSP Configuration
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "connect-src 'self' http://localhost:5000 http://localhost:5173; "
+            "img-src 'self' data:; "
+            "frame-ancestors 'none'; "
+            "form-action 'self';"
+        )
         return response
 
     # Service health checking route

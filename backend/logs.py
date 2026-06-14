@@ -1,4 +1,5 @@
 from datetime import datetime
+import html
 from flask import Blueprint, request, jsonify, g
 try:
     from .models import db, DailyLog
@@ -70,8 +71,58 @@ def sync_log():
         mood_toggles = {}
     if not isinstance(symptom_tags, dict):
         symptom_tags = {}
+    else:
+        symptom_tags = dict(symptom_tags)
     if not isinstance(lifestyle_actions, dict):
         lifestyle_actions = {}
+
+    def sanitize_value(val):
+        if isinstance(val, str):
+            return html.escape(val)
+        elif isinstance(val, dict):
+            return {html.escape(k) if isinstance(k, str) else k: sanitize_value(v) for k, v in val.items()}
+        elif isinstance(val, list):
+            return [sanitize_value(item) for item in val]
+        return val
+
+    mood_toggles = sanitize_value(mood_toggles)
+    symptom_tags = sanitize_value(symptom_tags)
+    lifestyle_actions = sanitize_value(lifestyle_actions)
+
+    # Map non-menstrual phase sliders to symptom_tags to fix semantic column mismatch
+    if phase == 'follicular':
+        if flow is not None:
+            symptom_tags['focus'] = flow
+            flow = None
+        if pelvic is not None:
+            symptom_tags['strength'] = pelvic
+            pelvic = None
+        if back is not None:
+            symptom_tags['glow'] = back
+            back = None
+    elif phase == 'ovulatory':
+        if flow is not None:
+            symptom_tags['libido'] = flow
+            flow = None
+        if pelvic is not None:
+            symptom_tags['confidence'] = pelvic
+            pelvic = None
+        if back is not None:
+            symptom_tags['bloating'] = back
+            back = None
+    elif phase == 'luteal':
+        if flow is not None:
+            symptom_tags['bloating'] = flow
+            flow = None
+        if pelvic is not None:
+            symptom_tags['breastSensitivity'] = pelvic
+            pelvic = None
+        if energy is not None:
+            symptom_tags['anxiety'] = energy
+            energy = None
+        if back is not None:
+            symptom_tags['cravings'] = back
+            back = None
 
     # 3. Perform atomic transaction upsert
     try:
@@ -144,13 +195,52 @@ def sync_log():
 @jwt_required
 def get_logs():
     """
-    Retrieve all historical logs for the authenticated user, ordered by date.
+    Retrieve logs for the authenticated user. Order by date ascending.
+    If page and per_page query parameters are provided, return paginated results.
+    Otherwise, return all logs.
     """
     try:
-        logs = DailyLog.query.filter_by(user_id=g.user.id).order_by(DailyLog.log_date.asc()).all()
-        return jsonify({
-            "status": "success",
-            "logs": [log.to_dict() for log in logs]
-        }), 200
+        page = request.args.get('page', type=int)
+        per_page = request.args.get('per_page', type=int)
+        
+        query = DailyLog.query.filter_by(user_id=g.user.id).order_by(DailyLog.log_date.asc())
+        
+        if page and per_page:
+            pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+            return jsonify({
+                "status": "success",
+                "logs": [log.to_dict() for log in pagination.items],
+                "total": pagination.total,
+                "pages": pagination.pages,
+                "current_page": pagination.page
+            }), 200
+        else:
+            logs = query.all()
+            return jsonify({
+                "status": "success",
+                "logs": [log.to_dict() for log in logs]
+            }), 200
     except Exception as e:
         return jsonify({"error": "Failed to retrieve user logs due to an internal error."}), 500
+
+
+@logs_bp.route('/export', methods=['GET'])
+@jwt_required
+def export_logs():
+    """
+    Export all user configurations and daily log history as a JSON download.
+    """
+    try:
+        from flask import make_response
+        logs = DailyLog.query.filter_by(user_id=g.user.id).order_by(DailyLog.log_date.asc()).all()
+        export_data = {
+            "user": g.user.to_dict(),
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "logs": [log.to_dict() for log in logs]
+        }
+        response = make_response(jsonify(export_data), 200)
+        response.headers["Content-Disposition"] = "attachment; filename=selene_health_export.json"
+        response.headers["Content-Type"] = "application/json"
+        return response
+    except Exception as e:
+        return jsonify({"error": "Failed to export data due to an internal error."}), 500

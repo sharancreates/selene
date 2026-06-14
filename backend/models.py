@@ -26,52 +26,34 @@ def is_valid_pin(pin):
     return True, None
 
 
-# Setup Fernet Encryption Key
-# Attempts to read environment key; if absent, raises ValueError unless in a testing context
-encryption_key = os.environ.get('SELENE_ENCRYPTION_KEY')
-if not encryption_key:
-    import sys
-    is_testing = 'unittest' in sys.modules or os.environ.get('TESTING') == 'True' or os.environ.get('FLASK_ENV') == 'testing'
-    if is_testing:
-        # Generate temporary key for unit testing execution contexts
-        encryption_key = Fernet.generate_key().decode()
-    else:
-        raise ValueError("SELENE_ENCRYPTION_KEY environment variable is required.")
-
-cipher_suite = Fernet(encryption_key.encode())
+def get_cipher():
+    from flask import g, has_app_context
+    if has_app_context() and hasattr(g, 'user_encryption_key') and g.user_encryption_key:
+        return Fernet(g.user_encryption_key.encode())
+    raise ValueError("User encryption key is missing. Active session or context required.")
 
 
 def encrypt_val(val):
     if val is None:
         return None
     val_str = str(val)
-    return cipher_suite.encrypt(val_str.encode()).decode()
+    cipher = get_cipher()
+    return cipher.encrypt(val_str.encode()).decode()
 
 
 def decrypt_val(encrypted_val, target_type=str):
     if encrypted_val is None:
         return None
-    try:
-        decrypted_str = cipher_suite.decrypt(encrypted_val.encode()).decode()
-        if target_type == int:
-            return int(decrypted_str)
-        elif target_type == float:
-            return float(decrypted_str)
-        elif target_type == dict:
-            return json.loads(decrypted_str)
-        return decrypted_str
-    except Exception:
-        # Graceful fallback: If it is not ciphertext (e.g. legacy logs), return cleartext
-        try:
-            if target_type == int:
-                return int(encrypted_val)
-            elif target_type == float:
-                return float(encrypted_val)
-            elif target_type == dict:
-                return json.loads(encrypted_val)
-        except Exception:
-            pass
-        return encrypted_val
+    cipher = get_cipher()
+    decrypted_str = cipher.decrypt(encrypted_val.encode()).decode()
+    if target_type == int:
+        return int(decrypted_str)
+    elif target_type == float:
+        return float(decrypted_str)
+    elif target_type == dict:
+        return json.loads(decrypted_str)
+    return decrypted_str
+
 
 
 class EncryptedString(TypeDecorator):
@@ -145,6 +127,10 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
     pin_hash = db.Column(db.String(255), nullable=False)
     refresh_token_hash = db.Column(db.String(255), nullable=True)
+    recovery_hash = db.Column(db.String(255), nullable=True)
+    encrypted_dek_pin = db.Column(db.Text, nullable=True)
+    encrypted_dek_recovery = db.Column(db.Text, nullable=True)
+
     
     # Baseline configurations (used for cycle prediction computations)
     cycle_length_baseline = db.Column(db.Integer, nullable=False, default=28)
@@ -209,16 +195,47 @@ class DailyLog(db.Model):
     )
 
     def to_dict(self):
-        """Helper method to serialize a daily log entry."""
+        """Helper method to serialize a daily log entry with legacy read fallbacks."""
+        flow = self.flow_intensity
+        pelvic = self.pelvic_pain
+        back = self.back_pain
+        energy = self.energy_level
+
+        tags = self.symptom_tags or {}
+        
+        if self.phase == 'follicular':
+            if 'focus' in tags:
+                flow = tags['focus']
+            if 'strength' in tags:
+                pelvic = tags['strength']
+            if 'glow' in tags:
+                back = tags['glow']
+        elif self.phase == 'ovulatory':
+            if 'libido' in tags:
+                flow = tags['libido']
+            if 'confidence' in tags:
+                pelvic = tags['confidence']
+            if 'bloating' in tags:
+                back = tags['bloating']
+        elif self.phase == 'luteal':
+            if 'bloating' in tags:
+                flow = tags['bloating']
+            if 'breastSensitivity' in tags:
+                pelvic = tags['breastSensitivity']
+            if 'anxiety' in tags:
+                energy = tags['anxiety']
+            if 'cravings' in tags:
+                back = tags['cravings']
+
         return {
             "id": self.id,
             "user_id": self.user_id,
             "log_date": self.log_date.isoformat() if isinstance(self.log_date, date) else self.log_date,
             "phase": self.phase,
-            "energy_level": self.energy_level,
-            "pelvic_pain": self.pelvic_pain,
-            "flow_intensity": self.flow_intensity,
-            "back_pain": self.back_pain,
+            "energy_level": energy,
+            "pelvic_pain": pelvic,
+            "flow_intensity": flow,
+            "back_pain": back,
             "sleep_quality": self.sleep_quality,
             "basal_body_temp": self.basal_body_temp,
             "mood_toggles": self.mood_toggles,
@@ -228,3 +245,18 @@ class DailyLog(db.Model):
 
     def __repr__(self):
         return f"<DailyLog User {self.user_id} on {self.log_date}>"
+
+
+class RevokedToken(db.Model):
+    """
+    RevokedToken Model representing blacklisted JWT identifiers (jti)
+    along with their expiration dates, to clean up expired entries periodically.
+    """
+    __tablename__ = 'revoked_tokens'
+    
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    jti = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
+
+    def __repr__(self):
+        return f"<RevokedToken {self.jti}>"
