@@ -1,6 +1,6 @@
 import unittest
 import json
-from datetime import date
+from datetime import date, datetime, timedelta
 
 # Import Flask elements
 try:
@@ -37,6 +37,13 @@ class SeleneBackendTestCase(unittest.TestCase):
         self.ctx.push()
         db.create_all()
 
+        # Temporarily hide selene_model.joblib to ensure fallback math tests run without interference
+        import os
+        self.model_path = os.path.join(os.path.dirname(__file__), 'selene_model.joblib')
+        self.model_temp_path = self.model_path + '.tmp'
+        if os.path.exists(self.model_path):
+            os.rename(self.model_path, self.model_temp_path)
+
     def tearDown(self):
         """
         Rolls back session transactions and drops tables to avoid side effects.
@@ -44,6 +51,11 @@ class SeleneBackendTestCase(unittest.TestCase):
         db.session.remove()
         db.drop_all()
         self.ctx.pop()
+
+        # Restore selene_model.joblib if it was hidden
+        import os
+        if os.path.exists(self.model_temp_path):
+            os.rename(self.model_temp_path, self.model_path)
 
     def test_registration_and_login(self):
         """
@@ -871,6 +883,199 @@ class SeleneBackendTestCase(unittest.TestCase):
         self.assertEqual(data['database'], 'connected')
         self.assertIn('redis', data)
 
+    def test_clinical_standardization_and_smoothing(self):
+        """
+        Tests LOINC/SNOMED CT clinical codes in log responses and
+        Savitzky-Golay smoothing on BBT curves.
+        """
+        # Register and login
+        register_payload = {"username": "clinicaluser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        
+        token = res.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+        self.client.set_cookie('access_token', token)
+        
+        # Log 5 days of data to trigger Savitzky-Golay (requires >= 5 points)
+        temps = [97.5, 98.0, 97.8, 98.2, 98.1]
+        for i in range(5):
+            log_payload = {
+                "log_date": f"2026-06-0{i+1}",
+                "phase": "follicular",
+                "energy_level": 70,
+                "pelvic_pain": 20,
+                "flow_intensity": 10,
+                "back_pain": 30,
+                "sleep_quality": 80,
+                "basal_body_temp": temps[i]
+            }
+            res_log = self.client.post('/api/logs/sync', json=log_payload, headers=headers)
+            self.assertEqual(res_log.status_code, 200)
+
+        # Retrieve daily logs and check clinical codes
+        res_get_logs = self.client.get('/api/logs', headers=headers)
+        self.assertEqual(res_get_logs.status_code, 200)
+        logs_data = res_get_logs.get_json()
+        logs_list = logs_data.get('logs', [])
+        self.assertTrue(len(logs_list) >= 5)
+        
+        first_log = logs_list[0]
+        self.assertIn("clinical_codes", first_log)
+        self.assertEqual(first_log["clinical_codes"]["pelvic_pain"]["loinc"], "72514-3")
+        self.assertEqual(first_log["clinical_codes"]["basal_body_temp"]["snomed"], "386725007")
+
+        # Test Savitzky-Golay smoothing directly via pipeline
+        from pipeline import extract_log_dataframe
+        user = User.query.filter_by(username="clinicaluser").first()
+        df = extract_log_dataframe(user.id)
+        self.assertEqual(len(df), 5)
+        
+        # Validate that basal_body_temp was smoothed via Savitzky-Golay 5-point filter
+        # The center value (index 2: raw 97.8) should be smoothed using coefficients:
+        # [-3*97.5 + 12*98.0 + 17*97.8 + 12*98.2 - 3*98.1] / 35.0 = 98.0057
+        self.assertAlmostEqual(df.loc[2, 'basal_body_temp'], 98.0057, places=2)
+
+    def test_prediction_engine_and_feedback(self):
+        """
+        Tests cycle prediction standard deviation calculation, medical disclaimers, 
+        and rating feedback submission.
+        """
+        # Register and login
+        register_payload = {"username": "predictuser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        
+        token = res.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+        self.client.set_cookie('access_token', token)
+        
+        # 1. Prediction on <10 logs should trigger calibrating status
+        res_pred = self.client.get('/api/predict/next-cycle', headers=headers)
+        self.assertEqual(res_pred.status_code, 200)
+        self.assertEqual(res_pred.get_json()['status'], 'calibrating')
+
+        # Log 11 days of menses start dates to trigger actual model prediction
+        for i in range(11):
+            # Simulate a historical period start log
+            log_payload = {
+                "log_date": (datetime.now().date() - timedelta(days=35-i)).isoformat(),
+                "phase": "menstrual",
+                "energy_level": 50,
+                "pelvic_pain": 10,
+                "flow_intensity": 40,
+                "back_pain": 20,
+                "sleep_quality": 70,
+                "basal_body_temp": 97.6
+            }
+            self.client.post('/api/logs/sync', json=log_payload, headers=headers)
+
+        # 2. Re-trigger prediction with enough logs (11) - temporarily restore the model file
+        import os
+        if os.path.exists(self.model_temp_path):
+            os.rename(self.model_temp_path, self.model_path)
+            
+        try:
+            res_pred_calibrated = self.client.get('/api/predict/next-cycle', headers=headers)
+            self.assertEqual(res_pred_calibrated.status_code, 200)
+        
+            pred_data = res_pred_calibrated.get_json()
+            self.assertEqual(pred_data['status'], 'success')
+            self.assertIn('prediction_error_std', pred_data['prediction'])
+            self.assertIn('prediction_error_bounds', pred_data['prediction'])
+            self.assertIn('medical_disclaimer', pred_data['prediction'])
+            self.assertIn('MEDICAL DISCLAIMER', pred_data['prediction']['medical_disclaimer'])
+            
+            # 3. Test malformed query parameter exception refactoring (descriptive errors)
+            res_bad_param = self.client.get('/api/predict/next-cycle?date=invalid-date', headers=headers)
+            self.assertEqual(res_bad_param.status_code, 400)
+            self.assertIn('error', res_bad_param.get_json())
+            self.assertIn('Use YYYY-MM-DD', res_bad_param.get_json()['error'])
+
+            # 4. Test submitting prediction feedback
+            feedback_payload = {
+                "prediction_date": "2026-06-20",
+                "actual_start_date": "2026-06-18",
+                "rating": 5,
+                "comments": "Very accurate prediction this month!"
+            }
+            res_feedback = self.client.post('/api/predict/feedback', json=feedback_payload, headers=headers)
+            self.assertEqual(res_feedback.status_code, 201)
+            self.assertEqual(res_feedback.get_json()['status'], 'success')
+            
+            # Verify saved feedback in the database
+            user = User.query.filter_by(username="predictuser").first()
+            from models import PredictionFeedback
+            fb = PredictionFeedback.query.filter_by(user_id=user.id).first()
+            self.assertIsNotNone(fb)
+            self.assertEqual(fb.rating, 5)
+            self.assertEqual(fb.comments, "Very accurate prediction this month!")
+        finally:
+            if os.path.exists(self.model_path):
+                os.rename(self.model_path, self.model_temp_path)
+
+    def test_isolation_forest_anomaly_detection(self):
+        """
+        Tests that Isolation Forest anomaly detection returns successful response
+        and flags anomalies after 10 logs.
+        """
+        register_payload = {"username": "anomalyuser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        
+        token = res.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+        self.client.set_cookie('access_token', token)
+        
+        # 1. Request anomalies under 10 logs -> calibrating
+        res_calib = self.client.get('/api/predict/anomalies', headers=headers)
+        self.assertEqual(res_calib.status_code, 200)
+        self.assertEqual(res_calib.get_json()['status'], 'calibrating')
+
+        # Log 12 entries with a sudden symptom spike and a logging gap
+        for i in range(11):
+            log_payload = {
+                "log_date": (datetime.now().date() - timedelta(days=20-i)).isoformat(),
+                "phase": "follicular",
+                "energy_level": 60,
+                "pelvic_pain": 10,
+                "flow_intensity": 0,
+                "back_pain": 10,
+                "sleep_quality": 80,
+                "basal_body_temp": 97.8
+            }
+            # Introduce a symptom spike on the 5th log
+            if i == 4:
+                log_payload["pelvic_pain"] = 95
+                log_payload["back_pain"] = 95
+            self.client.post('/api/logs/sync', json=log_payload, headers=headers)
+
+        # Add a 12th log with a huge logging gap (10 days earlier)
+        gap_log = {
+            "log_date": (datetime.now().date() - timedelta(days=40)).isoformat(),
+            "phase": "follicular",
+            "energy_level": 60,
+            "pelvic_pain": 10,
+            "flow_intensity": 0,
+            "back_pain": 10,
+            "sleep_quality": 80,
+            "basal_body_temp": 97.8
+        }
+        self.client.post('/api/logs/sync', json=gap_log, headers=headers)
+
+        # 2. Get anomalies -> success
+        res_anom = self.client.get('/api/predict/anomalies', headers=headers)
+        self.assertEqual(res_anom.status_code, 200)
+        
+        anom_data = res_anom.get_json()
+        self.assertEqual(anom_data['status'], 'success')
+        self.assertIn('anomalies', anom_data)
+        self.assertIn('medical_disclaimer', anom_data)
+        
+        # Verify that we detected at least one anomaly (spike or logging gap)
+        self.assertTrue(len(anom_data['anomalies']) >= 1)
+
 
 if __name__ == '__main__':
     unittest.main()
+

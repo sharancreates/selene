@@ -164,6 +164,46 @@ class User(db.Model):
         return f"<User {self.username}>"
 
 
+CLINICAL_CODE_MAPPING = {
+    "energy_level": {
+        "loinc": "85585-8",
+        "loinc_name": "Energy level",
+        "snomed": "248250005",
+        "snomed_name": "Fatigue"
+    },
+    "pelvic_pain": {
+        "loinc": "72514-3",
+        "loinc_name": "Pain severity - Pelvic region",
+        "snomed": "76046002",
+        "snomed_name": "Pelvic pain"
+    },
+    "flow_intensity": {
+        "loinc": "84566-9",
+        "loinc_name": "Menstrual flow intensity",
+        "snomed": "128704005",
+        "snomed_name": "Menstrual flow"
+    },
+    "back_pain": {
+        "loinc": "29463-7",
+        "loinc_name": "Back pain",
+        "snomed": "279039007",
+        "snomed_name": "Low back pain"
+    },
+    "sleep_quality": {
+        "loinc": "81320-4",
+        "loinc_name": "Sleep quality",
+        "snomed": "301345002",
+        "snomed_name": "Sleep pattern"
+    },
+    "basal_body_temp": {
+        "loinc": "8310-5",
+        "loinc_name": "Body temperature",
+        "snomed": "386725007",
+        "snomed_name": "Body temperature"
+    }
+}
+
+
 class DailyLog(db.Model):
     """
     DailyLog Model representing symptoms, vitals, moods, and actions logged on a specific date.
@@ -244,7 +284,8 @@ class DailyLog(db.Model):
             "basal_body_temp": self.basal_body_temp,
             "mood_toggles": self.mood_toggles,
             "symptom_tags": self.symptom_tags,
-            "lifestyle_actions": self.lifestyle_actions
+            "lifestyle_actions": self.lifestyle_actions,
+            "clinical_codes": CLINICAL_CODE_MAPPING
         }
 
     def __repr__(self):
@@ -264,3 +305,33 @@ class RevokedToken(db.Model):
 
     def __repr__(self):
         return f"<RevokedToken {self.jti}>"
+
+
+class PredictionFeedback(db.Model):
+    """
+    PredictionFeedback Model representing the rating and validation feedback 
+    provided by users on cycle predictions.
+    """
+    __tablename__ = 'prediction_feedback'
+    
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    prediction_date = db.Column(db.Date, nullable=False)
+    actual_start_date = db.Column(db.Date, nullable=True)
+    rating = db.Column(db.Integer, nullable=False)  # 1 to 5 stars
+    comments = db.Column(EncryptedString, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "prediction_date": self.prediction_date.isoformat() if self.prediction_date else None,
+            "actual_start_date": self.actual_start_date.isoformat() if self.actual_start_date else None,
+            "rating": self.rating,
+            "comments": self.comments,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+    def __repr__(self):
+        return f"<PredictionFeedback User {self.user_id} Rating {self.rating}>"

@@ -18,8 +18,25 @@ except ImportError:
     from auth import jwt_required
     from pipeline import extract_log_dataframe
 
+class MLPipelineError(Exception):
+    """Custom exception for ML pipeline errors to return descriptive API messages."""
+    def __init__(self, message, status_code=400):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
 # Define the prediction blueprint
 predict_bp = Blueprint('predict', __name__)
+
+
+@predict_bp.errorhandler(MLPipelineError)
+def handle_pipeline_error(error):
+    return jsonify({
+        "status": "error",
+        "error": error.message
+    }), error.status_code
+
 
 # Absolute path for the compiled ML model binary
 MODEL_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'selene_model.joblib')
@@ -56,7 +73,7 @@ def predict_next_cycle():
             try:
                 reference_date = datetime.strptime(test_date_str, '%Y-%m-%d').date()
             except ValueError:
-                reference_date = datetime.now().date()
+                raise MLPipelineError("Invalid 'date' query parameter format. Use YYYY-MM-DD.", 400)
         else:
             reference_date = datetime.now().date()
 
@@ -162,6 +179,14 @@ def predict_next_cycle():
         if user.has_pcos or user.has_pmdd or user.has_endo:
             insight += " (Disclaimer: This insight is for educational tracking and does not constitute medical advice.)"
 
+        # Calculate standard deviation of historical cycle lengths (Task 22)
+        if len(cycle_lengths) >= 2:
+            prediction_std = float(np.std(cycle_lengths))
+        else:
+            prediction_std = 2.0  # Default standard error fallback
+
+        disclaimer_text = "MEDICAL DISCLAIMER: Selene is an educational tracking tool. It does not provide clinical diagnoses, medical treatments, or formal recommendations. Consult a licensed healthcare provider for medical concerns."
+
         return jsonify({
             "status": "success",
             "prediction": {
@@ -170,17 +195,19 @@ def predict_next_cycle():
                 "days_until_period": (next_period_date - reference_date).days,
                 "cycle_length_calculated": estimated_cycle_length,
                 "period_length_calculated": estimated_period_length,
-                "insight": insight
+                "prediction_error_std": round(prediction_std, 2),
+                "prediction_error_bounds": f"±{round(prediction_std, 1)} days",
+                "insight": insight,
+                "medical_disclaimer": disclaimer_text
             }
         }), 200
 
+    except MLPipelineError as mpe:
+        raise mpe
     except Exception as e:
         from flask import current_app
         current_app.logger.error(f"Prediction logic error: {str(e)}", exc_info=True)
-        return jsonify({
-            "status": "error",
-            "error": "Failed to calculate cycle prediction due to an internal error."
-        }), 500
+        raise MLPipelineError(f"Failed to calculate cycle prediction due to an internal error: {str(e)}", 500)
 
 
 @predict_bp.route('/insights', methods=['GET'])
@@ -211,6 +238,131 @@ def get_insights():
                 }
             ]
         }), 500
+
+
+@predict_bp.route('/feedback', methods=['POST'])
+@jwt_required
+def submit_feedback():
+    """
+    Records user validation feedback and rating for a cycle prediction.
+    """
+    from models import PredictionFeedback
+    
+    data = request.get_json() or {}
+    prediction_date_str = data.get('prediction_date')
+    actual_start_date_str = data.get('actual_start_date')
+    rating = data.get('rating')
+    comments = data.get('comments')
+    
+    if not prediction_date_str:
+        raise MLPipelineError("prediction_date is required.", 400)
+    if rating is None:
+        raise MLPipelineError("rating is required.", 400)
+    try:
+        rating_int = int(rating)
+        if not (1 <= rating_int <= 5):
+            raise ValueError()
+    except ValueError:
+        raise MLPipelineError("rating must be an integer between 1 and 5.", 400)
+        
+    try:
+        pred_date = datetime.strptime(prediction_date_str, '%Y-%m-%d').date()
+    except ValueError:
+        raise MLPipelineError("Invalid prediction_date format. Use YYYY-MM-DD.", 400)
+        
+    actual_date = None
+    if actual_start_date_str:
+        try:
+            actual_date = datetime.strptime(actual_start_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            raise MLPipelineError("Invalid actual_start_date format. Use YYYY-MM-DD.", 400)
+            
+    try:
+        feedback = PredictionFeedback(
+            user_id=g.user.id,
+            prediction_date=pred_date,
+            actual_start_date=actual_date,
+            rating=rating_int,
+            comments=comments
+        )
+        db.session.add(feedback)
+        db.session.commit()
+        
+        return jsonify({
+            "status": "success",
+            "message": "Feedback submitted successfully.",
+            "feedback": feedback.to_dict()
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        raise MLPipelineError(f"Failed to save feedback: {str(e)}", 500)
+
+
+@predict_bp.route('/anomalies', methods=['GET'])
+@jwt_required
+def detect_anomalies():
+    """
+    Analyzes user's historical log patterns using an Isolation Forest 
+    to flag symptom spike and tracking frequency anomalies.
+    """
+    from sklearn.ensemble import IsolationForest
+    
+    try:
+        df = extract_log_dataframe(g.user.id)
+        if df.empty or len(df) < 10:
+            return jsonify({
+                "status": "calibrating",
+                "message": f"Fewer than 10 logs logged. Isolation Forest anomaly calibration requires at least 10 log entries (currently {len(df)}).",
+                "anomalies": [],
+                "medical_disclaimer": "MEDICAL DISCLAIMER: Selene anomaly detection is not diagnostic advice."
+            }), 200
+            
+        # 1. Compute symptom index counts per log day
+        symptom_counts = []
+        for i in range(len(df)):
+            count = 0.0
+            # Sum dynamic mood counts
+            count += sum(df.loc[i, col] for col in df.columns if col.startswith('mood_'))
+            count += sum(df.loc[i, col] for col in df.columns if col.startswith('symptom_'))
+            # Scale pelvic and back pain (0-100) to match count variance
+            count += (df.loc[i, 'pelvic_pain'] or 0) / 10.0
+            count += (df.loc[i, 'back_pain'] or 0) / 10.0
+            symptom_counts.append(count)
+            
+        # 2. Compute chronological logging gaps
+        logging_gaps = [0.0]
+        for i in range(1, len(df)):
+            gap = float((df.loc[i, 'log_date'] - df.loc[i-1, 'log_date']).days)
+            logging_gaps.append(gap)
+            
+        features = np.column_stack((symptom_counts, logging_gaps))
+        
+        # 3. Fit Isolation Forest to detect multivariate outliers
+        clf = IsolationForest(contamination=0.1, random_state=42)
+        preds = clf.fit_predict(features)
+        
+        anomalies = []
+        for i in range(len(df)):
+            if preds[i] == -1:
+                reason = "Logging frequency gap anomaly detected."
+                if symptom_counts[i] > np.median(symptom_counts):
+                    reason = "Symptom score spike anomaly detected."
+                anomalies.append({
+                    "date": df.loc[i, 'log_date'].date().isoformat(),
+                    "symptom_index": float(round(symptom_counts[i], 1)),
+                    "logging_gap_days": int(logging_gaps[i]),
+                    "reason": reason
+                })
+                
+        disclaimer_text = "MEDICAL DISCLAIMER: Selene anomaly detection is based on mathematical models and is not diagnostic advice."
+        return jsonify({
+            "status": "success",
+            "anomalies": anomalies,
+            "medical_disclaimer": disclaimer_text
+        }), 200
+        
+    except Exception as e:
+        raise MLPipelineError(f"Anomaly detection pipeline failed: {str(e)}", 500)
 
 
 def get_empathetic_insight(phase, user):

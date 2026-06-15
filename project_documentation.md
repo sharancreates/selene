@@ -35,6 +35,14 @@ We have successfully completed all **20/20 tasks** of the **Security & Cryptogra
 * **Soft Account Deletion:** Enabled account soft-deletion with a 30-day recovery window. Logins by the deleted user within 30 days automatically restore the account; otherwise, deletion becomes permanent.
 * **Custom Admin CLI & Health Checks:** Exposed `db-backup` and `db-cleanup` Flask command line tasks, and integrated Redis connectivity pings in the `/health` endpoint checks.
 
+### F. Clinical & ML Pipeline Hardening (Task 21-30)
+* **Gradient Boosting Regressor:** Deployed an adaptive gradient boosting regressor (`selene_model.joblib`) trained on clinical conditions (PCOS, PMDD, Endometriosis) and vital indicators.
+* **Error Bounds:** Incorporated standard deviation calculations displaying error bounds (e.g., `±2.0 days`) based on historical log variance.
+* **Savitzky-Golay Smoothing:** Integrated a 5-point quadratic Savitzky-Golay convolutional filter for mathematical smoothing of Basal Body Temperature curves.
+* **Isolation Forest Anomaly Detection:** Added unsupervised outlier detection flagging symptom index spikes and logging frequency anomalies.
+* **Standardized Clinical Codes:** Mapped tracker fields to standard LOINC and SNOMED CT terminology codes.
+* **Encrypted Prediction Feedback:** Created an encrypted user feedback rating database schema.
+
 ---
 
 ## 2. Remaining Development Checklist (What is Left)
@@ -54,16 +62,16 @@ The remaining 40 tasks from the audit are organized by core areas.
 - [x] **20. Revoked Token Cleanup:** Set up a Celery or cron worker to clean expired JTI entries from the database.
 
 ### B. Clinical & ML Pipeline (Tasks 21–30)
-- [ ] **21. Train Cycle Regressor:** Train the cycle prediction model on public FemTech datasets and export it to `selene_model.joblib`.
-- [ ] **22. Prediction Error Standard Deviations:** Update prediction output to display standard deviation error bounds (e.g., ±2 days).
-- [ ] **23. Predict Exception Refactoring:** Ensure ML pipeline failure blocks raise descriptive API errors.
-- [ ] **24. Document Insight Sources:** Reference the medical papers justifying the rules (e.g., PCOS or PMDD flags) in the codebase.
-- [ ] **25. Savitzky-Golay Smoothing:** Implement moving-average smoothing for the Basal Body Temperature (BBT) curve.
-- [ ] **26. Isolation Forest Anomaly Detection:** Implement outlier detection on logging frequency and symptom counts.
-- [ ] **27. Clinical Disclaimers:** Add explicit medical disclaimers under all recommendations.
-- [ ] **28. Standardize Symptom Labels:** Align dynamic database symptom labels with standardized codes (e.g., LOINC / SNOMED CT).
-- [ ] **29. User Feedback Prompts:** Implement a rating feedback card to validate cycle predictions.
-- [ ] **30. Pipeline Validation Tests:** Write unit tests to check raw vital inputs against expected pipeline structures.
+- [x] **21. Train Cycle Regressor:** Train the cycle prediction model on public FemTech datasets and export it to `selene_model.joblib`.
+- [x] **22. Prediction Error Standard Deviations:** Update prediction output to display standard deviation error bounds (e.g., ±2 days).
+- [x] **23. Predict Exception Refactoring:** Ensure ML pipeline failure blocks raise descriptive API errors.
+- [x] **24. Document Insight Sources:** Reference the medical papers justifying the rules (e.g., PCOS or PMDD flags) in the codebase.
+- [x] **25. Savitzky-Golay Smoothing:** Implement moving-average smoothing for the Basal Body Temperature (BBT) curve.
+- [x] **26. Isolation Forest Anomaly Detection:** Implement outlier detection on logging frequency and symptom counts.
+- [x] **27. Clinical Disclaimers:** Add explicit medical disclaimers under all recommendations.
+- [x] **28. Standardize Symptom Labels:** Align dynamic database symptom labels with standardized codes (e.g., LOINC / SNOMED CT).
+- [x] **29. User Feedback Prompts:** Implement a rating feedback card to validate cycle predictions.
+- [x] **30. Pipeline Validation Tests:** Write unit tests to check raw vital inputs against expected pipeline structures.
 
 ### C. Frontend Quality (Tasks 31–40)
 - [ ] **31. Refactor Monolith Dashboard:** Split `Dashboard.jsx` (currently 1,400+ lines) into modular React components.

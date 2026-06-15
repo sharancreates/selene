@@ -79,6 +79,22 @@ def extract_log_dataframe(user_id):
             df['basal_body_temp'] = df['basal_body_temp'].fillna(98.0)
         else:
             df['basal_body_temp'] = 98.0
+
+        # Apply Savitzky-Golay smoothing filter to BBT (window_size=5, order=2)
+        # Savitzky-Golay coefficients for N=5, order=2: [-3, 12, 17, 12, -3] / 35.0
+        # If length is insufficient, fallback to moving average (window=3) or keep raw values.
+        if len(df) >= 5:
+            try:
+                coeffs = np.array([-3, 12, 17, 12, -3]) / 35.0
+                # Pad edges with boundary values to keep same output size
+                padded = np.pad(df['basal_body_temp'].values, (2, 2), mode='edge')
+                smoothed = np.convolve(padded, coeffs, mode='valid')
+                df['basal_body_temp'] = smoothed
+            except Exception as sg_err:
+                logger.warning(f"Savitzky-Golay filter exception: {str(sg_err)}. Falling back to simple moving average.")
+                df['basal_body_temp'] = df['basal_body_temp'].rolling(window=3, min_periods=1, center=True).mean()
+        else:
+            df['basal_body_temp'] = df['basal_body_temp'].rolling(window=3, min_periods=1, center=True).mean().fillna(98.0)
             
         # Impute missing slider metrics (0-100 spectrum scale)
         slider_cols = ['energy_level', 'pelvic_pain', 'flow_intensity', 'back_pain', 'sleep_quality']

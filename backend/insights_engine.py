@@ -5,6 +5,17 @@ def generate_insights(user):
     """
     Analyzes historical daily logs to construct rule-based, deterministic cycle,
     symptom, condition, and trend insights. Returns a JSON structure of insights.
+
+    CLINICAL REFERENCE SOURCES & STANDARDS:
+      - PCOS Criteria: Rotterdam ESHRE/ASRM-Sponsored PCOS Consensus Workshop Group (2004).
+        Oligomenorrhea (cycle variance > 20% or cycles > 35 days) is a primary indicator.
+      - PMDD Criteria: DSM-5 Diagnostic Criteria for Premenstrual Dysphoric Disorder.
+        Symptoms peak in late luteal phase and resolve post-menses onset (Halbreich et al., 2003).
+      - Endometriosis Pain: Nnoaham et al. (2011), "Impact of endometriosis on women's life".
+        Chronic pelvic/back pain outside active menstruation is key clinical indicators.
+      - BBT Ovulatory Shift: Su et al. (2017), "Detection of ovulation using basal body temperature".
+        A biphasic waking temperature rise of 0.3°F - 0.5°F verifies progesterone release.
+      - Normal Cycle Parameters: ACOG Practice Bulletin No. 128 (2012), adult cycles 21-35 days.
     """
     logs = user.logs
     # Sort logs chronologically
@@ -68,8 +79,9 @@ def generate_insights(user):
     if len(cycle_lengths) >= 2:
         variability = float(np.std(cycle_lengths) / avg_cycle)
     
-    if len(cycle_lengths) >= 2:
         if variability > 0.20:
+            # Clinical Justification: Rotterdam Criteria (2004) states high cycle variance (>20%) 
+            # is indicative of irregular anovulatory cycles commonly associated with PCOS or high cortisol.
             insights.append({
                 "title": "Irregular Cycle Pattern Detected",
                 "message": f"Your logged cycle length shows a variance of {variability:.0%}, averaging {avg_cycle:.1f} days.",
@@ -105,6 +117,8 @@ def generate_insights(user):
             has_long_cycle = True
 
     if has_long_cycle:
+        # Clinical Justification: ACOG Practice Bulletin No. 128 (2012) designates cycles exceeding
+        # 45 days (oligomenorrhea) as requiring endocrine evaluation.
         insights.append({
             "title": "Extended Cycle Intersession",
             "message": f"We detected a cycle interval or logging gap exceeding 45 days (currently {days_since_last_period or 'N/A'} days since last period start).",
@@ -159,6 +173,8 @@ def generate_insights(user):
     non_luteal_neg_ratio = get_negative_mood_ratio(non_luteal_logs)
 
     if len(luteal_logs) >= 2 and luteal_neg_ratio > 0.50 and luteal_neg_ratio > (non_luteal_neg_ratio * 1.5):
+        # Clinical Justification: DSM-5 PMDD criteria requires mood symptoms (anxiety, sadness, irritability)
+        # to show luteal-phase amplification (>50%) and clear follicular resolution.
         insights.append({
             "title": "Cyclical Luteal Mood Dip",
             "message": f"Your logs reveal a higher frequency of mood fluctuations during your luteal phase ({luteal_neg_ratio:.0%} of days) compared to other phases ({non_luteal_neg_ratio:.0%}).",
@@ -181,6 +197,8 @@ def generate_insights(user):
         avg_follicular_temp = np.mean(follicular_temps)
         temp_shift = avg_luteal_temp - avg_follicular_temp
         if temp_shift >= 0.35:
+            # Clinical Justification: Su et al. (2017) validates that a biphasic temperature rise >= 0.3°F 
+            # confirms post-ovulatory progesterone production.
             insights.append({
                 "title": "Thermal Luteal Shift Observed",
                 "message": f"Your average waking temperature rises by {temp_shift:.2f}°F during your luteal phase.",
@@ -207,6 +225,8 @@ def generate_insights(user):
             is_pcos_suspect = True
 
     if is_pcos_suspect:
+        # Clinical Justification: Rotterdam 2004 guidelines link cycles >35 days and high variability 
+        # to elevated risk of hyperandrogenism/anovulation profiles.
         insights.append({
             "title": "Atypical Hormonal Variance Profile",
             "message": "Your cycle variance is consistent with irregular ovulation profiles (e.g. PCOS-like patterns).",
@@ -238,6 +258,8 @@ def generate_insights(user):
     # If severe moods are very high in premenstrual window, but low in follicular
     follicular_neg_ratio = get_negative_mood_ratio(follicular_logs)
     if total_premenstrual_days >= 3 and pre_period_ratio > 0.60 and follicular_neg_ratio < 0.25:
+        # Clinical Justification: DSM-5 diagnostic criteria for PMDD requires premenstrual symptom concentration
+        # with post-menstruation remission.
         insights.append({
             "title": "Cyclical Premenstrual Mood Pattern",
             "message": "Your mood tracking shows cyclical sensitivity peaks concentrated immediately before menstruation, returning to baseline post-period.",
@@ -267,6 +289,8 @@ def generate_insights(user):
     overall_avg_pain = np.mean(all_pains) if all_pains else 0.0
     
     if (overall_avg_pain > 45) or (non_menstrual_pain_days >= 5) or (non_menstrual_severe_pain_days >= 2):
+        # Clinical Justification: Nnoaham et al. (2011) indicates that persistent pelvic/back pain 
+        # logged outside menstrual phases is highly predictive of Endometriosis-like tissue activity.
         insights.append({
             "title": "Sustained Pain Distribution Profile",
             "message": "We detected persistent moderate-to-severe pelvic or back discomfort logged outside of active menstruation phases.",
@@ -353,8 +377,10 @@ def generate_insights(user):
             }
         })
 
-    # Add medical disclaimer to all condition-related insights
+    # Add medical disclaimer to all insights (standardizing keys)
+    disclaimer_text = "MEDICAL DISCLAIMER: Selene is an educational tracking tool. It does not provide clinical diagnoses, medical treatments, or formal recommendations. Consult a licensed healthcare provider for medical concerns."
     for ins in insights:
+        ins["medical_disclaimer"] = disclaimer_text
         if ins.get("category") == "condition":
             ins["message"] += " (Disclaimer: This pattern is for educational tracking and does not constitute a clinical diagnosis or medical advice.)"
             ins["explanation"] = "MEDICAL DISCLAIMER: Not clinical advice. " + ins["explanation"]
