@@ -11,6 +11,7 @@ import Register from './components/Register';
 import Dashboard from './components/Dashboard';
 import CalendarView from './components/CalendarView';
 import Settings from './components/Settings';
+import Onboarding from './components/Onboarding';
 import { motion, AnimatePresence } from 'framer-motion';
 
 
@@ -34,6 +35,11 @@ function App() {
 
   const [view, setViewInternal] = useState(getInitialView);
   const [toast, setToast] = useState(null);
+  const [isAppLoading, setIsAppLoading] = useState(() => {
+    const path = window.location.pathname;
+    const isProtectedRoute = ['/dashboard', '/calendar', '/settings'].includes(path);
+    return isProtectedRoute || localStorage.getItem('selene_logged_in') === 'true';
+  });
 
   const showToast = (message, type = 'info') => {
     setToast({ message, type });
@@ -141,10 +147,16 @@ function App() {
         await fetch('/api/auth/csrf', { credentials: 'include' });
       } catch (_) {}
 
-      // Only restore session if user was previously logged in
+      const path = window.location.pathname;
+      const isProtectedRoute = ['/dashboard', '/calendar', '/settings'].includes(path);
+
       if (localStorage.getItem('selene_logged_in') === 'true') {
         await checkSession();
+      } else if (isProtectedRoute) {
+        setViewInternal('login');
+        window.history.replaceState({}, '', '/login');
       }
+      setIsAppLoading(false);
     };
     init();
 
@@ -208,11 +220,21 @@ function App() {
     setTimeout(() => { isAuthenticating.current = false; }, 2000);
   };
 
-  const isFullScreenView = view === 'dashboard' || view === 'calendar' || view === 'settings';
+  const isFullScreenView = view === 'dashboard' || view === 'calendar' || view === 'settings' || view === 'onboarding';
 
   if (!isUnlocked && token) {
     return <CalculatorGuard token={token} username={username} onUnlock={() => setIsUnlocked(true)} />;
   }
+
+  if (isAppLoading) {
+    return (
+      <div className="w-full min-h-screen bg-[var(--color-selene-beige)] flex items-center justify-center">
+        <div className="text-2xl font-handwriting text-black animate-pulse">Loading Selene...</div>
+      </div>
+    );
+  }
+
+  console.log("App.jsx Render Details:", { view, user, hasOnboarded: user?.has_onboarded, typeOfHasOnboarded: typeof user?.has_onboarded });
 
   return (
     <main className="w-full min-h-screen relative">
@@ -230,6 +252,10 @@ function App() {
         <Login setView={setView} onLoginSuccess={handleLoginSuccess} showToast={showToast} />
       ) : view === 'register' ? (
         <Register setView={setView} onLoginSuccess={handleLoginSuccess} showToast={showToast} />
+      ) : user && !user.has_onboarded ? (
+        <Onboarding token={token} user={user} setUser={setUser} setView={setView} showToast={showToast} />
+      ) : view === 'onboarding' ? (
+        <Onboarding token={token} user={user} setUser={setUser} setView={setView} showToast={showToast} />
       ) : view === 'calendar' ? (
         <CalendarView username={username} setView={setView} token={token} user={user} onLogout={handleLogout} selectedDate={selectedDate} setSelectedDate={setSelectedDate} />
       ) : view === 'settings' ? (

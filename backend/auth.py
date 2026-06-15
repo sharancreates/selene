@@ -624,6 +624,8 @@ def update_profile():
         user.has_pmdd = bool(data['has_pmdd'])
     if 'has_endo' in data:
         user.has_endo = bool(data['has_endo'])
+    if 'has_onboarded' in data:
+        user.has_onboarded = bool(data['has_onboarded'])
         
     try:
         db.session.commit()

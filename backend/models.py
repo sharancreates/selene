@@ -140,6 +140,7 @@ class User(db.Model):
     has_pcos = db.Column(db.Boolean, nullable=False, default=False)
     has_pmdd = db.Column(db.Boolean, nullable=False, default=False)
     has_endo = db.Column(db.Boolean, nullable=False, default=False)
+    has_onboarded = db.Column(db.Boolean, nullable=False, default=False)
     
     # Soft delete flags for 30-day recovery window
     is_deleted = db.Column(db.Boolean, nullable=False, default=False)
@@ -157,7 +158,8 @@ class User(db.Model):
             "period_length_baseline": self.period_length_baseline,
             "has_pcos": self.has_pcos,
             "has_pmdd": self.has_pmdd,
-            "has_endo": self.has_endo
+            "has_endo": self.has_endo,
+            "has_onboarded": self.has_onboarded
         }
 
     def __repr__(self):

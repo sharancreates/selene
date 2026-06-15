@@ -6,6 +6,7 @@ import PhaseCircle from './PhaseCircle';
 import BBTTrendChart from './BBTTrendChart';
 import PatternInsights from './PatternInsights';
 import AlertsPanel from './AlertsPanel';
+import HealthConditionsPanel from './HealthConditionsPanel';
 import TeaIllustration from './TeaIllustration';
 import ReadingIllustration from './ReadingIllustration';
 import SleepingIllustration from './SleepingIllustration';
@@ -83,6 +84,94 @@ function getPredictedPhaseForDate(dateStr, prediction) {
   } else { 
     return 'luteal';
   }
+}
+
+function estimatePhaseFromBaselines(dateStr, logs, user) {
+  if (!logs || logs.length === 0) return 'menstrual';
+  
+  // Find all menstrual dates, sorted ascending
+  const menstrualLogs = logs
+    .filter(l => l.phase === 'menstrual')
+    .map(l => new Date(l.log_date + 'T00:00:00'))
+    .sort((a, b) => a - b);
+    
+  if (menstrualLogs.length === 0) return 'menstrual';
+  
+  // Find the period start dates (days where the previous day was not menstrual)
+  const periodStarts = [];
+  for (let i = 0; i < menstrualLogs.length; i++) {
+    if (i === 0) {
+      periodStarts.push(menstrualLogs[i]);
+    } else {
+      const diffDays = (menstrualLogs[i] - menstrualLogs[i-1]) / (1000 * 60 * 60 * 24);
+      if (diffDays > 1.5) {
+        periodStarts.push(menstrualLogs[i]);
+      }
+    }
+  }
+  
+  // Find the last period start date before or equal to targetDate
+  const targetDate = new Date(dateStr + 'T00:00:00');
+  const pastStarts = periodStarts.filter(d => d <= targetDate);
+  if (pastStarts.length === 0) {
+    return 'menstrual';
+  }
+  
+  const lastStart = pastStarts[pastStarts.length - 1];
+  const cycleLength = user?.cycle_length_baseline || 28;
+  const periodLength = user?.period_length_baseline || 5;
+  
+  const diffDays = Math.floor((targetDate - lastStart) / (1000 * 60 * 60 * 24));
+  const daysInCycle = diffDays % cycleLength;
+  const ovulationDay = cycleLength - 14;
+  
+  if (daysInCycle < periodLength) {
+    return 'menstrual';
+  } else if (daysInCycle < ovulationDay - 1) {
+    return 'follicular';
+  } else if (daysInCycle <= ovulationDay + 1) {
+    return 'ovulatory';
+  } else {
+    return 'luteal';
+  }
+}
+
+function getFallbackDaysUntilNextCycle(dateStr, logs, user) {
+  if (!logs || logs.length === 0) return user?.cycle_length_baseline || 28;
+  
+  const menstrualLogs = logs
+    .filter(l => l.phase === 'menstrual')
+    .map(l => new Date(l.log_date + 'T00:00:00'))
+    .sort((a, b) => a - b);
+    
+  if (menstrualLogs.length === 0) return user?.cycle_length_baseline || 28;
+  
+  const periodStarts = [];
+  for (let i = 0; i < menstrualLogs.length; i++) {
+    if (i === 0) {
+      periodStarts.push(menstrualLogs[i]);
+    } else {
+      const diffDays = (menstrualLogs[i] - menstrualLogs[i-1]) / (1000 * 60 * 60 * 24);
+      if (diffDays > 1.5) {
+        periodStarts.push(menstrualLogs[i]);
+      }
+    }
+  }
+  
+  const targetDate = new Date(dateStr + 'T00:00:00');
+  const pastStarts = periodStarts.filter(d => d <= targetDate);
+  if (pastStarts.length === 0) {
+    return user?.cycle_length_baseline || 28;
+  }
+  
+  const lastStart = pastStarts[pastStarts.length - 1];
+  const cycleLength = user?.cycle_length_baseline || 28;
+  
+  const diffDays = Math.floor((targetDate - lastStart) / (1000 * 60 * 60 * 24));
+  const daysInCycle = diffDays % cycleLength;
+  
+  const remaining = cycleLength - daysInCycle;
+  return remaining > 0 ? remaining : cycleLength;
 }
 
 function DashboardSkeleton() {
@@ -244,9 +333,12 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
         } else {
           resetSymptomStates();
           // Automatically set active phase based on predicted next period date
-          if (apiPrediction) {
+          if (apiPrediction && apiPrediction.next_period_date) {
             const predPhase = getPredictedPhaseForDate(selectedDate, apiPrediction);
             if (predPhase) setActivePhase(predPhase);
+          } else {
+            const fallbackPhase = estimatePhaseFromBaselines(selectedDate, data.logs, user);
+            setActivePhase(fallbackPhase);
           }
         }
       } else {
@@ -750,10 +842,20 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
                     <p className="font-handwriting text-xl sm:text-2xl text-black/80 max-w-lg mx-auto">
                       {apiPrediction ? apiPrediction.insight : currentPhaseConfig.prediction}
                     </p>
-                    {apiPrediction && apiPrediction.next_period_date && (
+                    {activePhase !== 'menstrual' ? (
                       <p className="font-handwriting text-lg text-black/60 mt-3 font-semibold">
-                        next expected period: {new Date(apiPrediction.next_period_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })} ({apiPrediction.days_until_period} days remaining)
+                        next cycle in {
+                          apiPrediction && apiPrediction.days_until_period !== undefined && apiPrediction.days_until_period !== null
+                            ? apiPrediction.days_until_period
+                            : getFallbackDaysUntilNextCycle(selectedDate, allLogs, user)
+                        } days
                       </p>
+                    ) : (
+                      apiPrediction && apiPrediction.next_period_date && (
+                        <p className="font-handwriting text-lg text-black/60 mt-3 font-semibold">
+                          next expected period: {new Date(apiPrediction.next_period_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })} ({apiPrediction.days_until_period} days remaining)
+                        </p>
+                      )
                     )}
                   </div>
                 </div>
@@ -1125,6 +1227,8 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
               isMenorrhagiaDetected={isMenorrhagiaDetected} 
               bleedingDays={bleedingDays} 
             />
+
+            <HealthConditionsPanel user={user} />
 
             {/* Vitals Input & BBT Trend Chart */}
             <div className="bg-white/40 backdrop-blur-md rounded-[3.5rem] p-8 sm:p-10 border border-black/5 shadow-md grid grid-cols-1 md:grid-cols-12 gap-10 items-start">

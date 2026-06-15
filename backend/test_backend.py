@@ -1157,6 +1157,53 @@ class SeleneBackendTestCase(unittest.TestCase):
         self.assertEqual(res_revoked.status_code, 401)
         self.assertIn('revoked', res_revoked.get_json()['error'].lower())
 
+    def test_profile_update_and_onboarding(self):
+        """
+        Tests the user profile baseline modifications and onboarding completion flags.
+        """
+        # 1. Register a test user
+        register_payload = {"username": "onboarduser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        
+        user_data = res.get_json()['user']
+        token = res.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+
+        # Assert default has_onboarded value is False
+        self.assertFalse(user_data.get('has_onboarded', True))
+
+        # 2. Update profile baseline statistics and mark onboarding complete
+        update_payload = {
+            "cycle_length_baseline": 30,
+            "period_length_baseline": 6,
+            "has_pcos": True,
+            "has_pmdd": False,
+            "has_endo": True,
+            "has_onboarded": True
+        }
+        res_update = self.client.put('/api/auth/profile', json=update_payload, headers=headers)
+        self.assertEqual(res_update.status_code, 200)
+        
+        updated_data = res_update.get_json()['user']
+        self.assertEqual(updated_data['cycle_length_baseline'], 30)
+        self.assertEqual(updated_data['period_length_baseline'], 6)
+        self.assertTrue(updated_data['has_pcos'])
+        self.assertFalse(updated_data['has_pmdd'])
+        self.assertTrue(updated_data['has_endo'])
+        self.assertTrue(updated_data['has_onboarded'])
+
+        # Verify database persistency directly
+        with self.app.app_context():
+            user_db = User.query.filter_by(username="onboarduser").first()
+            self.assertIsNotNone(user_db)
+            self.assertEqual(user_db.cycle_length_baseline, 30)
+            self.assertEqual(user_db.period_length_baseline, 6)
+            self.assertTrue(user_db.has_pcos)
+            self.assertFalse(user_db.has_pmdd)
+            self.assertTrue(user_db.has_endo)
+            self.assertTrue(user_db.has_onboarded)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -16,12 +16,7 @@ const getCookie = (name) => {
   const [regUserData, setRegUserData] = useState(null);
   const [regToken, setRegToken] = useState('');
   
-  // Selected conditions
-  const [conditions, setConditions] = useState({
-    pcos: false,
-    pmdd: false,
-    endo: false,
-  });
+
 
   const [camouflageMode, setCamouflageMode] = useState(false);
   const [showConsentModal, setShowConsentModal] = useState(false);
@@ -29,12 +24,7 @@ const getCookie = (name) => {
   const [consentKey, setConsentKey] = useState(false);
   const [consentWithdraw, setConsentWithdraw] = useState(false);
 
-  const handleToggleCondition = (key) => {
-    setConditions(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
-  };
+
 
   const validateForm = () => {
     if (!username.trim()) {
@@ -69,9 +59,9 @@ const getCookie = (name) => {
           kek_pin,
           cycle_length_baseline: 28,
           period_length_baseline: 5,
-          has_pcos: conditions.pcos,
-          has_pmdd: conditions.pmdd,
-          has_endo: conditions.endo
+          has_pcos: false,
+          has_pmdd: false,
+          has_endo: false
         })
       });
       
@@ -295,44 +285,7 @@ const getCookie = (name) => {
                 />
               </div>
 
-              {/* Conditions Selection */}
-              <div className="flex justify-between items-center gap-2 mt-2 px-1">
-                {/* PCOS Option */}
-                <button
-                  type="button"
-                  onClick={() => handleToggleCondition('pcos')}
-                  className="flex items-center gap-1.5 focus:outline-none cursor-pointer group"
-                >
-                  <div className={`w-4 h-4 rounded-full border-2 border-black flex items-center justify-center transition-all duration-200 ${conditions.pcos ? 'bg-[var(--color-selene-brown)]' : 'bg-transparent'}`}>
-                    {conditions.pcos && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
-                  </div>
-                  <span className="font-handwriting text-black text-xl sm:text-2xl select-none group-hover:text-[var(--color-selene-brown)] transition-colors">PCOS</span>
-                </button>
 
-                {/* PMDD Option */}
-                <button
-                  type="button"
-                  onClick={() => handleToggleCondition('pmdd')}
-                  className="flex items-center gap-1.5 focus:outline-none cursor-pointer group"
-                >
-                  <div className={`w-4 h-4 rounded-full border-2 border-black flex items-center justify-center transition-all duration-200 ${conditions.pmdd ? 'bg-[var(--color-selene-brown)]' : 'bg-transparent'}`}>
-                    {conditions.pmdd && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
-                  </div>
-                  <span className="font-handwriting text-black text-xl sm:text-2xl select-none group-hover:text-[var(--color-selene-brown)] transition-colors">PMDD</span>
-                </button>
-
-                {/* ENDO Option */}
-                <button
-                  type="button"
-                  onClick={() => handleToggleCondition('endo')}
-                  className="flex items-center gap-1.5 focus:outline-none cursor-pointer group"
-                >
-                  <div className={`w-4 h-4 rounded-full border-2 border-black flex items-center justify-center transition-all duration-200 ${conditions.endo ? 'bg-[var(--color-selene-brown)]' : 'bg-transparent'}`}>
-                    {conditions.endo && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
-                  </div>
-                  <span className="font-handwriting text-black text-xl sm:text-2xl select-none group-hover:text-[var(--color-selene-brown)] transition-colors">ENDO</span>
-                </button>
-              </div>
 
               {/* Camouflage Mode Switch */}
               <div className="flex items-center justify-start gap-3 mt-1 pb-6 px-1">
