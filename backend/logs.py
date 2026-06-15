@@ -244,3 +244,209 @@ def export_logs():
         return response
     except Exception as e:
         return jsonify({"error": "Failed to export data due to an internal error."}), 500
+
+
+@logs_bp.route('/export/fhir', methods=['GET'])
+@jwt_required
+def export_fhir_logs():
+    """
+    Export all user daily log history formatted as a HL7/FHIR JSON Bundle.
+    """
+    try:
+        from flask import make_response
+        logs = DailyLog.query.filter_by(user_id=g.user.id).order_by(DailyLog.log_date.asc()).all()
+        
+        patient_ref = f"patient-{g.user.id}"
+        
+        # 1. Initialize FHIR Bundle
+        bundle = {
+            "resourceType": "Bundle",
+            "type": "collection",
+            "entry": [
+                {
+                    "resource": {
+                        "resourceType": "Patient",
+                        "id": patient_ref,
+                        "identifier": [
+                            {
+                                "system": "http://selene.privacy/patients",
+                                "value": g.user.username
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        
+        # 2. Iterate through logs and append Observation entries
+        for log in logs:
+            effective_date = log.log_date.isoformat()
+            
+            # Waking Basal Body Temp
+            if log.basal_body_temp is not None:
+                bundle["entry"].append({
+                    "resource": {
+                        "resourceType": "Observation",
+                        "id": f"obs-{log.id}-bbt",
+                        "status": "final",
+                        "code": {
+                            "coding": [{
+                                "system": "http://loinc.org",
+                                "code": "8310-5",
+                                "display": "Body temperature"
+                            }]
+                        },
+                        "subject": {
+                            "reference": f"Patient/{patient_ref}"
+                        },
+                        "effectiveDateTime": effective_date,
+                        "valueQuantity": {
+                            "value": float(log.basal_body_temp),
+                            "unit": "degF",
+                            "system": "http://unitsofmeasure.org",
+                            "code": "[degF]"
+                        }
+                    }
+                })
+                
+            # Menstrual Flow Intensity
+            if log.flow_intensity is not None:
+                bundle["entry"].append({
+                    "resource": {
+                        "resourceType": "Observation",
+                        "id": f"obs-{log.id}-flow",
+                        "status": "final",
+                        "code": {
+                            "coding": [{
+                                "system": "http://loinc.org",
+                                "code": "10159-2",
+                                "display": "History of Menstrual flow"
+                            }]
+                        },
+                        "subject": {
+                            "reference": f"Patient/{patient_ref}"
+                        },
+                        "effectiveDateTime": effective_date,
+                        "valueQuantity": {
+                            "value": int(log.flow_intensity),
+                            "unit": "%",
+                            "system": "http://unitsofmeasure.org",
+                            "code": "%"
+                        }
+                    }
+                })
+
+            # Pelvic Pain
+            if log.pelvic_pain is not None:
+                bundle["entry"].append({
+                    "resource": {
+                        "resourceType": "Observation",
+                        "id": f"obs-{log.id}-pelvic",
+                        "status": "final",
+                        "code": {
+                            "coding": [{
+                                "system": "http://snomed.info/sct",
+                                "code": "289535008",
+                                "display": "Pelvic pain"
+                            }]
+                        },
+                        "subject": {
+                            "reference": f"Patient/{patient_ref}"
+                        },
+                        "effectiveDateTime": effective_date,
+                        "valueQuantity": {
+                            "value": int(log.pelvic_pain),
+                            "unit": "%",
+                            "system": "http://unitsofmeasure.org",
+                            "code": "%"
+                        }
+                    }
+                })
+
+            # Lower Back Pain
+            if log.back_pain is not None:
+                bundle["entry"].append({
+                    "resource": {
+                        "resourceType": "Observation",
+                        "id": f"obs-{log.id}-back",
+                        "status": "final",
+                        "code": {
+                            "coding": [{
+                                "system": "http://snomed.info/sct",
+                                "code": "161891005",
+                                "display": "Backache"
+                            }]
+                        },
+                        "subject": {
+                            "reference": f"Patient/{patient_ref}"
+                        },
+                        "effectiveDateTime": effective_date,
+                        "valueQuantity": {
+                            "value": int(log.back_pain),
+                            "unit": "%",
+                            "system": "http://unitsofmeasure.org",
+                            "code": "%"
+                        }
+                    }
+                })
+
+            # Sleep Quality
+            if log.sleep_quality is not None:
+                bundle["entry"].append({
+                    "resource": {
+                        "resourceType": "Observation",
+                        "id": f"obs-{log.id}-sleep",
+                        "status": "final",
+                        "code": {
+                            "coding": [{
+                                "system": "http://snomed.info/sct",
+                                "code": "248254009",
+                                "display": "Sleep quality"
+                            }]
+                        },
+                        "subject": {
+                            "reference": f"Patient/{patient_ref}"
+                        },
+                        "effectiveDateTime": effective_date,
+                        "valueQuantity": {
+                            "value": int(log.sleep_quality),
+                            "unit": "%",
+                            "system": "http://unitsofmeasure.org",
+                            "code": "%"
+                        }
+                    }
+                })
+
+            # Energy Level
+            if log.energy_level is not None:
+                bundle["entry"].append({
+                    "resource": {
+                        "resourceType": "Observation",
+                        "id": f"obs-{log.id}-energy",
+                        "status": "final",
+                        "code": {
+                            "coding": [{
+                                "system": "http://snomed.info/sct",
+                                "code": "36111000119106",
+                                "display": "Energy level"
+                            }]
+                        },
+                        "subject": {
+                            "reference": f"Patient/{patient_ref}"
+                        },
+                        "effectiveDateTime": effective_date,
+                        "valueQuantity": {
+                            "value": int(log.energy_level),
+                            "unit": "%",
+                            "system": "http://unitsofmeasure.org",
+                            "code": "%"
+                        }
+                    }
+                })
+
+        response = make_response(jsonify(bundle), 200)
+        response.headers["Content-Disposition"] = f"attachment; filename=selene_fhir_export_{g.user.username}.json"
+        response.headers["Content-Type"] = "application/fhir+json"
+        return response
+    except Exception as e:
+        return jsonify({"error": "Failed to export FHIR logs due to an internal error."}), 500

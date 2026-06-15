@@ -94,13 +94,14 @@ The remaining 40 tasks from the audit are organized by core areas.
 - [x] **40. Calendar Render Optimization:** Optimize calendar day cells to avoid unnecessary re-renders.
 
 ### D. Compliance & Documentation (Tasks 41–50)
-- [ ] **41. Privacy Consent Flow:** Create an explicit consent modal on registration matching DPDP Act requirements.
-- [ ] **42. Data Flow Mapping:** Draft a formal documentation asset illustrating user data life cycle and decryption boundaries.
-- [ ] **43. FHIR Export Support:** Enable data export in the clinical HL7/FHIR JSON format.
-- [ ] **44. IRB Proposal Draft:** Prepare an Institutional Review Board proposal package for potential clinical trials.
-- [ ] **45. Clinical Letters of Support:** Obtain support statements from licensed clinicians.
-- [ ] **46. JWT Integration Tests:** Expand Python tests to check JWT edge cases.
-- [ ] **47. User PIN Recovery Flow:** Define and document user recovery paths when they lose their passcode.
-- [ ] **48. Local Installation Script:** Build an automated setup script (e.g., shell or batch) for local dev environments.
-- [ ] **49. Staging Server Setup:** Configure an automated CI/CD pipeline to deploy changes to a remote staging server.
-- [ ] **50. Pitch Deck Presentation:** Finalize the slide presentation emphasizing Selene's unique E2EE privacy model.
+- [x] **41. Privacy Consent Flow:** Create an explicit consent modal on registration matching DPDP Act requirements.
+- [x] **42. Data Flow Mapping:** Draft a formal documentation asset illustrating user data life cycle and decryption boundaries.
+- [x] **43. FHIR Export Support:** Enable data export in the clinical HL7/FHIR JSON format.
+- [x] **44. IRB Proposal Draft:** Prepare an Institutional Review Board proposal package for potential clinical trials.
+- [x] **45. Clinical Letters of Support:** Obtain support statements from licensed clinicians.
+- [x] **46. JWT Integration Tests:** Expand Python tests to check JWT edge cases.
+- [x] **47. User PIN Recovery Flow:** Define and document user recovery paths when they lose their passcode.
+- [x] **48. Local Installation Script:** Build an automated setup script (e.g., shell or batch) for local dev environments.
+- [x] **49. Staging Server Setup:** Configure an automated CI/CD pipeline to deploy changes to a remote staging server.
+- [x] **50. Pitch Deck Presentation:** Finalize the slide presentation emphasizing Selene's unique E2EE privacy model.
+

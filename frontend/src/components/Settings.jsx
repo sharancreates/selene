@@ -153,6 +153,35 @@ export default function Settings({ username = 'user', setView, token, user, setU
     }
   };
 
+  const handleExportFHIRData = async () => {
+    if (!token) {
+      showToast("Please log in to export settings.", "error");
+      return;
+    }
+    try {
+      const response = await fetch('/api/logs/export/fhir', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) throw new Error("FHIR export failed");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `selene_fhir_export_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast("Clinical FHIR data exported successfully! 🏥", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to export FHIR data", "error");
+    }
+  };
+
+
   const handleDeleteData = async () => {
     if (showDeleteConfirm) {
       if (!token) {
@@ -412,6 +441,15 @@ export default function Settings({ username = 'user', setView, token, user, setU
               className="flex-1 bg-[#1e2722] text-white font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md hover:bg-[#2a3830] transition-colors duration-200 cursor-pointer focus:outline-none"
             >
               Export My Data
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handleExportFHIRData}
+              className="flex-1 bg-[#8ba68b] text-black font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md hover:bg-[#7a957a] transition-colors duration-200 cursor-pointer focus:outline-none"
+            >
+              Export Clinical FHIR Data
             </motion.button>
 
             <motion.button

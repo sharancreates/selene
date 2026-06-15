@@ -1075,6 +1075,88 @@ class SeleneBackendTestCase(unittest.TestCase):
         # Verify that we detected at least one anomaly (spike or logging gap)
         self.assertTrue(len(anom_data['anomalies']) >= 1)
 
+    def test_jwt_edge_cases(self):
+        """
+        Tests security and token validation boundary scenarios: expired tokens, 
+        revoked tokens, signature tampering, and missing claims.
+        """
+        import jwt
+        
+        # 1. Register a test user
+        register_payload = {"username": "jwtuser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        token = res.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+
+        # Clear cookies so auth decorator falls back to Authorization header
+        self.client.delete_cookie('access_token')
+        self.client.delete_cookie('refresh_token')
+
+        # 2. Test signature tampering (modifying token characters)
+        headers_tampered = {'Authorization': f'Bearer {token[:-5]}abcde'}
+        res_tampered = self.client.get('/api/logs', headers=headers_tampered)
+        self.assertEqual(res_tampered.status_code, 401)
+        self.assertIn('Invalid token', res_tampered.get_json()['error'])
+
+        # 3. Test expired token
+        # Generate a custom token with a past expiry
+        from flask import current_app
+        from datetime import timezone
+        secret_key = current_app.config['SECRET_KEY']
+        past_expiry = datetime.now(timezone.utc) - timedelta(hours=1)
+        expired_payload = {
+            "sub": "jwtuser",
+            "jti": "some-jti-uuid",
+            "type": "access",
+            "exp": int(past_expiry.timestamp())
+        }
+        expired_token = jwt.encode(expired_payload, secret_key, algorithm="HS256")
+        headers_expired = {'Authorization': f'Bearer {expired_token}'}
+        
+        res_expired = self.client.get('/api/logs', headers=headers_expired)
+        self.assertEqual(res_expired.status_code, 401)
+        self.assertIn('expired', res_expired.get_json()['error'].lower())
+
+        # 4. Test missing subject ('sub') claim
+        no_sub_payload = {
+            "jti": "some-other-jti",
+            "type": "access",
+            "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+        }
+        no_sub_token = jwt.encode(no_sub_payload, secret_key, algorithm="HS256")
+        headers_no_sub = {'Authorization': f'Bearer {no_sub_token}'}
+        
+        res_no_sub = self.client.get('/api/logs', headers=headers_no_sub)
+        self.assertEqual(res_no_sub.status_code, 401)
+        self.assertIn('invalid token', res_no_sub.get_json()['error'].lower())
+
+        # 5. Test missing JTI claim
+        no_jti_payload = {
+            "sub": "jwtuser",
+            "type": "access",
+            "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+        }
+        no_jti_token = jwt.encode(no_jti_payload, secret_key, algorithm="HS256")
+        headers_no_jti = {'Authorization': f'Bearer {no_jti_token}'}
+        
+        res_no_jti = self.client.get('/api/logs', headers=headers_no_jti)
+        self.assertEqual(res_no_jti.status_code, 401)
+        self.assertIn('invalid token', res_no_jti.get_json()['error'].lower())
+
+        # 6. Test revoked token (blacklisted token scenario)
+        # Log out to blacklist the token in the database
+        # Re-attach cookie so logout endpoint can locate the session
+        self.client.set_cookie('access_token', token)
+        res_logout = self.client.post('/api/auth/logout')
+        self.assertEqual(res_logout.status_code, 200)
+        
+        # Accessing with blacklisted token should fail
+        self.client.delete_cookie('access_token')
+        res_revoked = self.client.get('/api/logs', headers=headers)
+        self.assertEqual(res_revoked.status_code, 401)
+        self.assertIn('revoked', res_revoked.get_json()['error'].lower())
+
 
 if __name__ == '__main__':
     unittest.main()

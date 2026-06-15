@@ -24,6 +24,11 @@ const getCookie = (name) => {
   });
 
   const [camouflageMode, setCamouflageMode] = useState(false);
+  const [showConsentModal, setShowConsentModal] = useState(false);
+  const [consentHealth, setConsentHealth] = useState(false);
+  const [consentKey, setConsentKey] = useState(false);
+  const [consentWithdraw, setConsentWithdraw] = useState(false);
+
   const handleToggleCondition = (key) => {
     setConditions(prev => ({
       ...prev,
@@ -47,14 +52,8 @@ const getCookie = (name) => {
     return true;
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const executeRegistration = async () => {
     setError('');
-    
-    if (!validateForm()) {
-      return;
-    }
-    
     try {
       const kek_pin = await deriveKeyFromPin(pin, username);
       const response = await fetch('/api/auth/register', {
@@ -76,14 +75,6 @@ const getCookie = (name) => {
         })
       });
       
-      // const data = await response.json();
-      // if (response.ok) {
-      //   setRegUserData(data.user);
-      //   setRegToken(data.token || '');
-      //   setRecoveryKey(data.recovery_key);
-      // } else {
-      //   setError(data.error || 'Registration failed');
-      // }
       const data = await response.json();
       if (response.ok) {
         // ADD this line to persist the camouflage mode setting
@@ -97,6 +88,15 @@ const getCookie = (name) => {
       }
     } catch (err) {
       setError('Network error. Please try again.');
+    }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setError('');
+    
+    if (validateForm()) {
+      setShowConsentModal(true);
     }
   };
 
@@ -407,6 +407,100 @@ const getCookie = (name) => {
           <span className="font-handwriting text-white/50 text-sm">© 2026 selene</span>
         </div>
       </div>
+
+      {/* DPDP Act Consent Modal */}
+      {showConsentModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="bg-[#eed9c4] text-[#362113] rounded-[2.5rem] border border-black/10 p-6 sm:p-8 max-w-lg w-full shadow-2xl flex flex-col gap-6"
+          >
+            <div>
+              <h3 className="font-handwriting text-3xl font-black text-center mb-1 text-[#362113]">
+                DPDP Act Consent Notice
+              </h3>
+              <p className="font-sans text-xs text-center text-[#362113]/70 uppercase tracking-widest font-bold">
+                Digital Personal Data Protection Act Compliance
+              </p>
+            </div>
+
+            <div className="font-sans text-sm text-[#362113]/90 leading-relaxed flex flex-col gap-3 max-h-60 overflow-y-auto pr-2 bg-white/20 p-4 rounded-2xl border border-black/5">
+              <p>
+                Selene is designed to prioritize your privacy above all else. Under the Digital Personal Data Protection (DPDP) Act, we require your explicit, informed consent to collect and process your personal health information.
+              </p>
+              <p>
+                <strong>1. Processing Purpose:</strong> We process your cycle dates, symptoms (flow, cramps, energy, pain, sleep), and Basal Body Temperature (BBT) solely to render your daily health logs and generate personalized cycle forecasts and anomaly warnings.
+              </p>
+              <p>
+                <strong>2. Client-Side Cryptographic Boundary:</strong> Your logs are encrypted on the server utilizing a Data Encryption Key (DEK) that is wrapped client-side using a key derived from your PIN. <strong>We do not know, store, or have access to your raw PIN or decrypted logs.</strong>
+              </p>
+              <p>
+                <strong>3. Withdrawal & Erasure:</strong> You retain the absolute right to withdraw this consent and permanently delete your account along with all historic logs at any time from the Settings dashboard.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3 font-sans">
+              <label className="flex items-start gap-3 cursor-pointer text-xs select-none">
+                <input 
+                  type="checkbox" 
+                  checked={consentHealth} 
+                  onChange={(e) => setConsentHealth(e.target.checked)}
+                  className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent mt-0.5"
+                />
+                <span className="leading-tight">I consent to the collection and processing of my menstrual dates, symptoms, and temperature data for tracking and cycle predictions.</span>
+              </label>
+
+              <label className="flex items-start gap-3 cursor-pointer text-xs select-none">
+                <input 
+                  type="checkbox" 
+                  checked={consentKey} 
+                  onChange={(e) => setConsentKey(e.target.checked)}
+                  className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent mt-0.5"
+                />
+                <span className="leading-tight">I understand that my PIN encrypts my tracking records client-side, and that losing my PIN or recovery key makes data recovery impossible.</span>
+              </label>
+
+              <label className="flex items-start gap-3 cursor-pointer text-xs select-none">
+                <input 
+                  type="checkbox" 
+                  checked={consentWithdraw} 
+                  onChange={(e) => setConsentWithdraw(e.target.checked)}
+                  className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent mt-0.5"
+                />
+                <span className="leading-tight">I acknowledge that I can withdraw this consent and permanently erase my data at any time under account settings.</span>
+              </label>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowConsentModal(false);
+                  setConsentHealth(false);
+                  setConsentKey(false);
+                  setConsentWithdraw(false);
+                }}
+                className="flex-1 bg-transparent hover:bg-black/5 text-[#362113] border border-black/10 font-bold py-2.5 rounded-full transition-colors font-sans text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!consentHealth || !consentKey || !consentWithdraw}
+                onClick={() => {
+                  setShowConsentModal(false);
+                  executeRegistration();
+                }}
+                className="flex-1 bg-[#1e2722] hover:bg-black text-white font-bold py-2.5 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-sans text-sm"
+              >
+                Agree & Register
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
     </section>
   );

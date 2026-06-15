@@ -185,10 +185,14 @@ def jwt_required(f):
                 return jsonify({"error": "Invalid token type"}), 401
                 
             jti = payload.get('jti')
+            if not jti:
+                return jsonify({"error": "Invalid token"}), 401
             if is_token_revoked(jti):
                 return jsonify({"error": "Token has been revoked"}), 401
                 
-            user_id = payload['sub']
+            user_id = payload.get('sub')
+            if not user_id:
+                return jsonify({"error": "Invalid token"}), 401
             
             # Retrieve the user model safely from db session
             user = db.session.get(User, user_id)
