@@ -1,21 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import CalendarDay from './CalendarDay';
 
 const phases = [
   { 
-    id: 'menstrual', name: 'Menstrual', color: '#df9b6d', bg: '#eed9c4', textColor: '#5a3d28',
+    id: 'menstrual', name: 'Menstrual', color: '#df9b6d', bg: '#eed9c4', textColor: '#362113',
     calendarHighlight: [24, 25, 26, 27],
   },
   { 
-    id: 'follicular', name: 'Follicular', color: '#8ca090', bg: '#e2eae5', textColor: '#2e3a32',
+    id: 'follicular', name: 'Follicular', color: '#8ca090', bg: '#e2eae5', textColor: '#1d2b20',
     calendarHighlight: [5, 6, 7, 8, 9, 10, 11, 12],
   },
   { 
-    id: 'ovulatory', name: 'Ovulatory', color: '#dfbe7e', bg: '#f5eedc', textColor: '#544629',
+    id: 'ovulatory', name: 'Ovulatory', color: '#dfbe7e', bg: '#f5eedc', textColor: '#382c16',
     calendarHighlight: [13, 14, 15],
   },
   { 
-    id: 'luteal', name: 'Luteal', color: '#9d8ea6', bg: '#e8e2eb', textColor: '#3a2f42',
+    id: 'luteal', name: 'Luteal', color: '#9d8ea6', bg: '#e8e2eb', textColor: '#2a1f33',
     calendarHighlight: [16, 17, 18, 19, 20, 21, 22, 23],
   }
 ];
@@ -33,7 +34,6 @@ function getFirstDayOfMonth(year, month) {
   return new Date(year, month, 1).getDay();
 }
 
-// Determine which phase a day falls in (simplified cyclic model)
 function getPhaseForDay(day) {
   if ([24, 25, 26, 27, 28, 1, 2, 3, 4].includes(day)) return phases[0]; // Menstrual
   if ([5, 6, 7, 8, 9, 10, 11, 12].includes(day)) return phases[1]; // Follicular
@@ -42,7 +42,35 @@ function getPhaseForDay(day) {
   return null;
 }
 
-function MonthCalendar({ year, month, today, logs, onDayClick, darkCalendar }) {
+function getPredictedPhaseForDate(dateStr, prediction) {
+  if (!prediction || !prediction.next_period_date) return null;
+  
+  const targetDate = new Date(dateStr + 'T00:00:00');
+  const nextPeriodDate = new Date(prediction.next_period_date + 'T00:00:00');
+  
+  const cycleLength = prediction.cycle_length || 28;
+  const periodLength = prediction.period_length || 5;
+  
+  const diffTime = targetDate - nextPeriodDate;
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  let dayOfCycle = (diffDays % Math.round(cycleLength));
+  if (dayOfCycle < 0) {
+    dayOfCycle += Math.round(cycleLength);
+  }
+  
+  if (dayOfCycle < periodLength) {
+    return 'menstrual';
+  } else if (dayOfCycle < 12) { 
+    return 'follicular';
+  } else if (dayOfCycle < 16) { 
+    return 'ovulatory';
+  } else { 
+    return 'luteal';
+  }
+}
+
+function MonthCalendar({ year, month, today, logs, prediction, onDayClick, darkCalendar }) {
   const daysInMonth = getDaysInMonth(year, month);
   const firstDay = getFirstDayOfMonth(year, month);
   const isCurrentMonth = today && today.year === year && today.month === month;
@@ -102,41 +130,41 @@ function MonthCalendar({ year, month, today, logs, onDayClick, darkCalendar }) {
         {Array.from({ length: daysInMonth }).map((_, i) => {
           const day = i + 1;
           const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          
           const loggedDay = logMap[dateStr];
-          const phase = loggedDay ? phases.find(p => p.id === loggedDay.phase) : getPhaseForDay(day);
+          const phase = loggedDay ? phases.find(p => p.id === loggedDay.phase) : null;
+          
           const isToday = isCurrentMonth && day === today.day;
+          
+          // Determine prediction overlay for future/unlogged days
+          const targetDateObj = new Date(dateStr + 'T00:00:00');
+          const todayDateObj = today ? new Date(today.year, today.month, today.day) : new Date();
+          const isFutureOrToday = targetDateObj >= todayDateObj;
+          
+          let predictedPhaseId = null;
+          if (!phase && isFutureOrToday && prediction) {
+            predictedPhaseId = getPredictedPhaseForDate(dateStr, prediction);
+          } else if (!phase) {
+            // Fallback static calendar prediction
+            const staticPhase = getPhaseForDay(day);
+            if (staticPhase) predictedPhaseId = staticPhase.id;
+          }
+          
+          const predictedPhase = predictedPhaseId ? phases.find(p => p.id === predictedPhaseId) : null;
 
           return (
-            <button
+            <CalendarDay
               key={day}
+              day={day}
+              dateStr={dateStr}
+              phase={phase}
+              predictedPhase={predictedPhase}
+              isToday={isToday}
               onClick={() => onDayClick(year, month, day)}
-              className="relative flex items-center justify-center h-9 w-9 mx-auto cursor-pointer focus:outline-none"
-            >
-              {phase && (
-                <motion.div
-                  initial={{ scale: 0.85 }}
-                  animate={{ scale: 1 }}
-                  className="absolute inset-0 rounded-xl flex items-center justify-center opacity-80"
-                  style={{ backgroundColor: phase.color }}
-                >
-                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-[#1e2722]" fill="currentColor">
-                    <path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z" />
-                  </svg>
-                </motion.div>
-              )}
-              {isToday && (
-                <div
-                  className="absolute inset-0 border-2 border-dashed rounded-xl border-[#df9b6d] z-10"
-                />
-              )}
-              <span className={`relative z-10 font-bold text-sm ${
-                phase 
-                  ? 'text-[#1e2722]' 
-                  : (darkCalendar ? 'text-white' : 'text-black')
-              }`}>
-                {day}
-              </span>
-            </button>
+              darkCalendar={darkCalendar}
+              phaseConfig={phase}
+              predictedPhaseConfig={predictedPhase}
+            />
           );
         })}
       </div>
@@ -149,37 +177,43 @@ export default function CalendarView({ username = 'user', setView, token, user, 
   const today = { year: now.getFullYear(), month: now.getMonth(), day: now.getDate() };
   
   const [logs, setLogs] = useState([]);
+  const [prediction, setPrediction] = useState(null);
   const [darkCalendar, setDarkCalendar] = useState(() => {
     const saved = localStorage.getItem('selene_dark_calendar');
     return saved === null ? true : saved === 'true';
   });
 
-  
+  // Fetch logs and predictions
   useEffect(() => {
-    const fetchLogs = async () => {
+    const fetchLogsAndPredictions = async () => {
       if (!token) return;
       try {
-        const response = await fetch('/api/logs', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        const data = await response.json();
-        if (response.ok && data.logs) {
-          setLogs(data.logs);
+        const [logsRes, predRes] = await Promise.all([
+          fetch('/api/logs', { headers: { 'Authorization': `Bearer ${token}` } }),
+          fetch('/api/predict/next-cycle', { headers: { 'Authorization': `Bearer ${token}` } })
+        ]);
+        
+        const logsData = await logsRes.json();
+        if (logsRes.ok && logsData.logs) {
+          setLogs(logsData.logs);
+        }
+        
+        const predData = await predRes.json();
+        if (predRes.ok && predData.prediction) {
+          setPrediction(predData.prediction);
         }
       } catch (e) {
-        console.error("Failed to fetch logs in calendar view", e);
+        console.error("Failed to fetch logs/predictions in calendar view", e);
       }
     };
-    fetchLogs();
+    fetchLogsAndPredictions();
   }, [token]);
 
-  const handleDayClick = (year, month, day) => {
+  const handleDayClick = useCallback((year, month, day) => {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     setSelectedDate(dateStr);
     setView('dashboard');
-  };
+  }, [setSelectedDate, setView]);
 
   // Start viewing from 2 months ago so the current month is centered
   const [startYear, setStartYear] = useState(now.getFullYear());
@@ -197,7 +231,6 @@ export default function CalendarView({ username = 'user', setView, token, user, 
   }
 
   const handleGoTo = () => {
-    // Center the selected month (show month-1, month, month+1)
     let prevMonth = goToMonth - 1;
     let prevYear = goToYear;
     if (prevMonth < 0) { prevMonth = 11; prevYear -= 1; }
@@ -229,13 +262,11 @@ export default function CalendarView({ username = 'user', setView, token, user, 
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
     >
-
       {/* Top Banner */}
       <motion.div
         className="w-full py-5 px-6 sm:px-12 flex flex-col md:flex-row justify-between items-center text-black border-b border-black/10 shadow-sm"
         style={{ backgroundColor: '#df9b6d' }}
       >
-        {/* Left: Brand */}
         <button
           onClick={() => setView('landing')}
           className="text-2xl font-black text-black tracking-widest hover:opacity-80 transition-opacity cursor-pointer mb-4 md:mb-0 focus:outline-none"
@@ -243,17 +274,15 @@ export default function CalendarView({ username = 'user', setView, token, user, 
           SELENE
         </button>
 
-        {/* Center: Welcome */}
         <div className="flex flex-col items-center text-center mb-4 md:mb-0">
-          <h1 className="font-handwriting text-3xl sm:text-4xl font-bold tracking-wide leading-none">
+          <h1 className="font-handwriting text-3xl sm:text-4xl font-bold tracking-wide leading-none text-[#362113]">
             Hellove, {username}
           </h1>
-          <p className="font-handwriting text-xl sm:text-2xl opacity-90 mt-1">
+          <p className="font-handwriting text-xl sm:text-2xl opacity-90 mt-1 text-[#362113]">
             {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
           </p>
         </div>
 
-        {/* Right: Actions */}
         <div className="flex items-center gap-4 flex-wrap justify-end">
           <button
             onClick={() => setView('dashboard')}
@@ -282,7 +311,6 @@ export default function CalendarView({ username = 'user', setView, token, user, 
 
       {/* Main Content */}
       <div className="w-full max-w-5xl mx-auto px-6 py-10 flex flex-col gap-10">
-
         {/* Go To Month Control */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <span className="font-sans text-black text-xl font-bold tracking-widest uppercase">GO TO:</span>
@@ -354,7 +382,16 @@ export default function CalendarView({ username = 'user', setView, token, user, 
             className="flex flex-col gap-8"
           >
             {months.map(({ year, month }) => (
-              <MonthCalendar key={`${year}-${month}`} year={year} month={month} today={today} logs={logs} onDayClick={handleDayClick} darkCalendar={darkCalendar} />
+              <MonthCalendar 
+                key={`${year}-${month}`} 
+                year={year} 
+                month={month} 
+                today={today} 
+                logs={logs} 
+                prediction={prediction}
+                onDayClick={handleDayClick} 
+                darkCalendar={darkCalendar} 
+              />
             ))}
           </motion.div>
         </AnimatePresence>
@@ -364,7 +401,7 @@ export default function CalendarView({ username = 'user', setView, token, user, 
           <h3 className="font-handwriting text-2xl text-black font-bold mb-4 text-center">Phase Legend</h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {phases.map(p => (
-              <div key={p.id} className="flex items-center gap-3 p-3 rounded-2xl" style={{ backgroundColor: p.bg }}>
+              <div key={p.id} className="flex items-center gap-3 p-3 rounded-2xl animate-fade-in" style={{ backgroundColor: p.bg }}>
                 <div className="w-5 h-5 rounded-lg flex-shrink-0" style={{ backgroundColor: p.color }}>
                   <svg viewBox="0 0 24 24" className="w-full h-full p-0.5" fill={p.textColor}>
                     <path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z" />
@@ -379,7 +416,6 @@ export default function CalendarView({ username = 'user', setView, token, user, 
         </div>
       </div>
 
-      {/* Footer */}
       <AppFooter />
     </motion.div>
   );

@@ -1,5 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import CustomSlider from './CustomSlider';
+import CustomToggle from './CustomToggle';
+import PhaseCircle from './PhaseCircle';
+import BBTTrendChart from './BBTTrendChart';
+import PatternInsights from './PatternInsights';
+import AlertsPanel from './AlertsPanel';
+import TeaIllustration from './TeaIllustration';
+import ReadingIllustration from './ReadingIllustration';
+import SleepingIllustration from './SleepingIllustration';
 
 // Phase configuration details
 const phases = [
@@ -8,40 +17,36 @@ const phases = [
     name: 'Menstrual', 
     color: '#df9b6d', 
     bg: '#eed9c4', 
-    textColor: '#5a3d28',
+    textColor: '#362113',
     calendarHighlight: [24, 25, 26, 27],
-    prediction: "Based on your logs: Your body is restoring. Focus on warm nourishing foods, gentle movement, and extra rest.",
-    illustrationText: "[Illustration Placeholder: Girl drinking tea in armchair]"
+    prediction: "Based on your logs: Your body is restoring. Focus on warm nourishing foods, gentle movement, and extra rest."
   },
   { 
     id: 'follicular', 
     name: 'Follicular', 
     color: '#8ca090', 
     bg: '#e2eae5', 
-    textColor: '#2e3a32',
+    textColor: '#1d2b20',
     calendarHighlight: [5, 6, 7, 8, 9, 10, 11, 12],
-    prediction: "Based on your logs: Estrogen is rising! Ideal phase for strength workouts, planning new projects, and creative brainstorming.",
-    illustrationText: "[Illustration Placeholder: Girl sketching and stretching in bright room]"
+    prediction: "Based on your logs: Estrogen is rising! Ideal phase for strength workouts, planning new projects, and creative brainstorming."
   },
   { 
     id: 'ovulatory', 
     name: 'Ovulatory', 
     color: '#dfbe7e', 
     bg: '#f5eedc', 
-    textColor: '#544629',
+    textColor: '#382c16',
     calendarHighlight: [13, 14, 15],
-    prediction: "Based on your logs: Estrogen and LH are peaking. Fertility is at its highest. Peak communication skills and social energy today.",
-    illustrationText: "[Illustration Placeholder: Girl meeting friends at a cozy cafe]"
+    prediction: "Based on your logs: Estrogen and LH are peaking. Fertility is at its highest. Peak communication skills and social energy today."
   },
   { 
     id: 'luteal', 
     name: 'Luteal', 
     color: '#9d8ea6', 
     bg: '#e8e2eb', 
-    textColor: '#3a2f42',
+    textColor: '#2a1f33',
     calendarHighlight: [16, 17, 18, 19, 20, 21, 22, 23],
-    prediction: "Based on your logs: Progesterone is dominant. Energy may naturally decrease. Great phase for nested organizing, reflection, and setting boundaries.",
-    illustrationText: "[Illustration Placeholder: Girl meditating wrapped in a soft blanket]"
+    prediction: "Based on your logs: Progesterone is dominant. Energy may naturally decrease. Great phase for nested organizing, reflection, and setting boundaries."
   }
 ];
 
@@ -52,89 +57,272 @@ const getCookie = (name) => {
   return '';
 };
 
-export default function Dashboard({ username = 'user', setView, token, user, onLogout, selectedDate, setSelectedDate }) {
+function getPredictedPhaseForDate(dateStr, prediction) {
+  if (!prediction || !prediction.next_period_date) return null;
+  
+  const targetDate = new Date(dateStr + 'T00:00:00');
+  const nextPeriodDate = new Date(prediction.next_period_date + 'T00:00:00');
+  
+  const cycleLength = prediction.cycle_length || 28;
+  const periodLength = prediction.period_length || 5;
+  
+  const diffTime = targetDate - nextPeriodDate;
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  let dayOfCycle = (diffDays % Math.round(cycleLength));
+  if (dayOfCycle < 0) {
+    dayOfCycle += Math.round(cycleLength);
+  }
+  
+  if (dayOfCycle < periodLength) {
+    return 'menstrual';
+  } else if (dayOfCycle < 12) { 
+    return 'follicular';
+  } else if (dayOfCycle < 16) { 
+    return 'ovulatory';
+  } else { 
+    return 'luteal';
+  }
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="w-full max-w-5xl mx-auto px-6 py-10 flex flex-col gap-10 animate-pulse">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
+        <div className="md:col-span-5 h-56 bg-black/5 rounded-[3rem]" />
+        <div className="md:col-span-7 h-56 bg-black/5 rounded-[3rem]" />
+      </div>
+      <div className="h-40 bg-black/5 rounded-[2.5rem]" />
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-10">
+        <div className="md:col-span-4 h-96 bg-black/5 rounded-[3rem]" />
+        <div className="md:col-span-8 h-96 bg-black/5 rounded-[3.5rem]" />
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard({ username = 'user', setView, token, user, onLogout, selectedDate, setSelectedDate, showToast }) {
   const [activePhase, setActivePhase] = useState('menstrual');
   const [allLogs, setAllLogs] = useState([]);
   const [apiPrediction, setApiPrediction] = useState(null);
   const [insights, setInsights] = useState([]);
   const [bbtInput, setBbtInput] = useState('');
+  
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [fetchError, setFetchError] = useState(null);
 
-  // Load daily log on selectedDate change
-  React.useEffect(() => {
-    const fetchDayLog = async () => {
-      if (!token || !selectedDate) return;
-      try {
-        const response = await fetch('/api/logs', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        const data = await response.json();
-        if (response.ok && data.logs) {
-          setAllLogs(data.logs);
-          const logForDay = data.logs.find(l => l.log_date === selectedDate);
-          if (logForDay) {
-            setActivePhase(logForDay.phase || 'menstrual');
-            setBbtInput(logForDay.basal_body_temp !== null ? String(logForDay.basal_body_temp) : '');
-            const phaseStr = logForDay.phase || 'menstrual';
-            if (phaseStr === 'menstrual') {
-              setMenstrualSliders({
-                flow: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 50,
-                cramps: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 30,
-                energy: logForDay.energy_level !== null ? logForDay.energy_level : 40,
-                pain: logForDay.back_pain !== null ? logForDay.back_pain : 25
-              });
-              setMenstrualMoods(logForDay.mood_toggles || {});
-              setMenstrualSymptoms(logForDay.symptom_tags || {});
-              setMenstrualSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 60);
-              if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
-                setMenstrualMeds(logForDay.lifestyle_actions.meds);
-              }
-            } else if (phaseStr === 'follicular') {
-              setFollicularSliders({
-                focus: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 80,
-                strength: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 75,
-                energy: logForDay.energy_level !== null ? logForDay.energy_level : 80,
-                glow: logForDay.back_pain !== null ? logForDay.back_pain : 70
-              });
-              setFollicularMoods(logForDay.mood_toggles || {});
-              setFollicularSymptoms(logForDay.symptom_tags || {});
-              setFollicularSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 75);
-              if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
-                setFollicularMeds(logForDay.lifestyle_actions.meds);
-              }
-            } else if (phaseStr === 'ovulatory') {
-              setOvulatorySliders({
-                libido: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 80,
-                confidence: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 90,
-                social: logForDay.energy_level !== null ? logForDay.energy_level : 85,
-                bloating: logForDay.back_pain !== null ? logForDay.back_pain : 10
-              });
-              setOvulatoryMoods(logForDay.mood_toggles || {});
-              setOvulatorySymptoms(logForDay.symptom_tags || {});
-              setOvulatorySleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 70);
-              if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
-                setOvulatoryMeds(logForDay.lifestyle_actions.meds);
-              }
-            } else if (phaseStr === 'luteal') {
-              setLutealSliders({
-                bloating: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 45,
-                breastSensitivity: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 35,
-                anxiety: logForDay.energy_level !== null ? logForDay.energy_level : 50,
-                cravings: logForDay.back_pain !== null ? logForDay.back_pain : 60
-              });
-              setLutealMoods(logForDay.mood_toggles || {});
-              setLutealSymptoms(logForDay.symptom_tags || {});
-              setLutealSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 55);
-              if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
-                setLutealMeds(logForDay.lifestyle_actions.meds);
-              }
+  // 1. Menstrual States
+  const [menstrualSliders, setMenstrualSliders] = useState({ flow: 50, cramps: 30, energy: 40, pain: 25 });
+  const [menstrualMoods, setMenstrualMoods] = useState({ brainFog: false, anxious: false, irritable: false, sensitive: false, calm: true });
+  const [menstrualSymptoms, setMenstrualSymptoms] = useState({ sugarCravings: false, energyCrash: false, cysticAcne: false, hairShedding: false });
+  const [menstrualMeds, setMenstrualMeds] = useState([false, false, false]);
+  const [menstrualSleep, setMenstrualSleep] = useState(60);
+
+  // 2. Follicular States
+  const [follicularSliders, setFollicularSliders] = useState({ focus: 80, strength: 75, energy: 80, glow: 70 });
+  const [follicularMoods, setFollicularMoods] = useState({ motivated: true, social: false, creative: true, optimistic: false, calm: true });
+  const [follicularSymptoms, setFollicularSymptoms] = useState({ startProject: false, mentalClarity: false, skinImprovement: false, strengthWorkout: false });
+  const [follicularMeds, setFollicularMeds] = useState([false, false, false]);
+  const [follicularSleep, setFollicularSleep] = useState(75);
+
+  // 3. Ovulatory States
+  const [ovulatorySliders, setOvulatorySliders] = useState({ libido: 80, confidence: 90, social: 85, bloating: 10 });
+  const [ovulatoryMoods, setOvulatoryMoods] = useState({ magnetic: true, outgoing: true, highEnergy: true, restless: false, affectionate: false });
+  const [ovulatorySymptoms, setOvulatorySymptoms] = useState({ positiveLh: false, stretchyMucus: false, mittelschmerz: false, highStamina: false });
+  const [ovulatoryMeds, setOvulatoryMeds] = useState([false, false, false]);
+  const [ovulatorySleep, setOvulatorySleep] = useState(70);
+
+  // 4. Luteal States
+  const [lutealSliders, setLutealSliders] = useState({ bloating: 45, breastSensitivity: 35, anxiety: 50, cravings: 60 });
+  const [lutealMoods, setLutealMoods] = useState({ tearful: false, anxious: true, nesting: true, quiet: false, tired: true });
+  const [lutealSymptoms, setLutealSymptoms] = useState({ moodSwings: false, waterRetention: false, sleepDifficulty: false, boundariesSet: false });
+  const [lutealMeds, setLutealMeds] = useState([false, false, false]);
+  const [lutealSleep, setLutealSleep] = useState(55);
+
+  const currentPhaseConfig = phases.find(p => p.id === activePhase) || phases[0];
+
+  const resetSymptomStates = () => {
+    setBbtInput('');
+    setMenstrualSliders({ flow: 50, cramps: 30, energy: 40, pain: 25 });
+    setMenstrualMoods({ brainFog: false, anxious: false, irritable: false, sensitive: false, calm: true });
+    setMenstrualSymptoms({ sugarCravings: false, energyCrash: false, cysticAcne: false, hairShedding: false });
+    setMenstrualMeds([false, false, false]);
+    setMenstrualSleep(60);
+
+    setFollicularSliders({ focus: 80, strength: 75, energy: 80, glow: 70 });
+    setFollicularMoods({ motivated: true, social: false, creative: true, optimistic: false, calm: true });
+    setFollicularSymptoms({ startProject: false, mentalClarity: false, skinImprovement: false, strengthWorkout: false });
+    setFollicularMeds([false, false, false]);
+    setFollicularSleep(75);
+
+    setOvulatorySliders({ libido: 80, confidence: 90, social: 85, bloating: 10 });
+    setOvulatoryMoods({ magnetic: true, outgoing: true, highEnergy: true, restless: false, affectionate: false });
+    setOvulatorySymptoms({ positiveLh: false, stretchyMucus: false, mittelschmerz: false, highStamina: false });
+    setOvulatoryMeds([false, false, false]);
+    setOvulatorySleep(70);
+
+    setLutealSliders({ bloating: 45, breastSensitivity: 35, anxiety: 50, cravings: 60 });
+    setLutealMoods({ tearful: false, anxious: true, nesting: true, quiet: false, tired: true });
+    setLutealSymptoms({ moodSwings: false, waterRetention: false, sleepDifficulty: false, boundariesSet: false });
+    setLutealMeds([false, false, false]);
+    setLutealSleep(55);
+  };
+
+  const fetchLogsData = async () => {
+    if (!token || !selectedDate) return;
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      const response = await fetch('/api/logs', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await response.json();
+      if (response.ok && data.logs) {
+        setAllLogs(data.logs);
+        const logForDay = data.logs.find(l => l.log_date === selectedDate);
+        if (logForDay) {
+          setActivePhase(logForDay.phase || 'menstrual');
+          setBbtInput(logForDay.basal_body_temp !== null ? String(logForDay.basal_body_temp) : '');
+          const phaseStr = logForDay.phase || 'menstrual';
+          if (phaseStr === 'menstrual') {
+            setMenstrualSliders({
+              flow: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 50,
+              cramps: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 30,
+              energy: logForDay.energy_level !== null ? logForDay.energy_level : 40,
+              pain: logForDay.back_pain !== null ? logForDay.back_pain : 25
+            });
+            setMenstrualMoods(logForDay.mood_toggles || {});
+            setMenstrualSymptoms(logForDay.symptom_tags || {});
+            setMenstrualSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 60);
+            if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
+              setMenstrualMeds(logForDay.lifestyle_actions.meds);
             }
-          } else {
-            setBbtInput('');
+          } else if (phaseStr === 'follicular') {
+            setFollicularSliders({
+              focus: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 80,
+              strength: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 75,
+              energy: logForDay.energy_level !== null ? logForDay.energy_level : 80,
+              glow: logForDay.back_pain !== null ? logForDay.back_pain : 70
+            });
+            setFollicularMoods(logForDay.mood_toggles || {});
+            setFollicularSymptoms(logForDay.symptom_tags || {});
+            setFollicularSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 75);
+            if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
+              setFollicularMeds(logForDay.lifestyle_actions.meds);
+            }
+          } else if (phaseStr === 'ovulatory') {
+            setOvulatorySliders({
+              libido: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 80,
+              confidence: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 90,
+              social: logForDay.energy_level !== null ? logForDay.energy_level : 85,
+              bloating: logForDay.back_pain !== null ? logForDay.back_pain : 10
+            });
+            setOvulatoryMoods(logForDay.mood_toggles || {});
+            setOvulatorySymptoms(logForDay.symptom_tags || {});
+            setOvulatorySleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 70);
+            if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
+              setOvulatoryMeds(logForDay.lifestyle_actions.meds);
+            }
+          } else if (phaseStr === 'luteal') {
+            setLutealSliders({
+              bloating: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 45,
+              breastSensitivity: logForDay.pelvic_pain !== null ? logForDay.pelvic_pain : 35,
+              anxiety: logForDay.energy_level !== null ? logForDay.energy_level : 50,
+              cravings: logForDay.back_pain !== null ? logForDay.back_pain : 60
+            });
+            setLutealMoods(logForDay.mood_toggles || {});
+            setLutealSymptoms(logForDay.symptom_tags || {});
+            setLutealSleep(logForDay.sleep_quality !== null ? logForDay.sleep_quality : 55);
+            if (logForDay.lifestyle_actions && Array.isArray(logForDay.lifestyle_actions.meds)) {
+              setLutealMeds(logForDay.lifestyle_actions.meds);
+            }
+          }
+        } else {
+          resetSymptomStates();
+          // Automatically set active phase based on predicted next period date
+          if (apiPrediction) {
+            const predPhase = getPredictedPhaseForDate(selectedDate, apiPrediction);
+            if (predPhase) setActivePhase(predPhase);
           }
         }
+      } else {
+        setFetchError(data.error || "Failed to load logs.");
+      }
+    } catch (e) {
+      console.error(e);
+      setFetchError("Network connection failure.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  const syncOfflineQueue = async () => {
+    const queuedLogs = JSON.parse(localStorage.getItem('selene_offline_logs') || '[]');
+    if (queuedLogs.length === 0) return;
+
+    setIsSyncing(true);
+    let successCount = 0;
+    const remainingLogs = [];
+
+    for (const log of queuedLogs) {
+      try {
+        const response = await fetch('/api/logs/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-CSRF-Token': getCookie('csrf_token')
+          },
+          body: JSON.stringify(log)
+        });
+        if (response.ok) {
+          successCount++;
+        } else {
+          remainingLogs.push(log);
+        }
+      } catch (err) {
+        console.error("Failed to sync offline log", err);
+        remainingLogs.push(log);
+      }
+    }
+
+    if (successCount > 0) {
+      showToast(`Synced ${successCount} offline logs successfully! 🚀`, 'success');
+      fetchLogsData();
+    }
+
+    localStorage.setItem('selene_offline_logs', JSON.stringify(remainingLogs));
+    setIsSyncing(false);
+  };
+
+  // Listen to network status change
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncOfflineQueue();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [token]);
+
+  // Load daily log on selectedDate change
+  useEffect(() => {
+    const loadCycleAndPredict = async () => {
+      if (!token) return;
+      try {
         const predResponse = await fetch(`/api/predict/next-cycle?date=${selectedDate}`, {
           headers: {
             'Authorization': `Bearer ${token}`
@@ -159,26 +347,28 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
           }
         }
       } catch (e) {
-        console.error("Failed to load daily log", e);
+        console.error("Failed to load predictions/insights", e);
       }
+      
+      // Load logs
+      fetchLogsData();
     };
-    fetchDayLog();
+    
+    loadCycleAndPredict();
   }, [selectedDate, token]);
-
-
 
   const handleSaveLog = async () => {
     if (!token) {
-      alert("Please login first to save your data.");
+      showToast("Please login first to save your data.", "error");
       return;
     }
-    
+
     let payload = {
       log_date: selectedDate,
       phase: activePhase,
       basal_body_temp: bbtInput !== '' ? parseFloat(bbtInput) : null
     };
-    
+
     if (activePhase === 'menstrual') {
       payload.flow_intensity = menstrualSliders.flow;
       payload.pelvic_pain = menstrualSliders.cramps;
@@ -216,7 +406,25 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
       payload.symptom_tags = lutealSymptoms;
       payload.lifestyle_actions = { meds: lutealMeds };
     }
-    
+
+    if (!isOnline) {
+      // Offline support
+      const queuedLogs = JSON.parse(localStorage.getItem('selene_offline_logs') || '[]');
+      const filtered = queuedLogs.filter(l => l.log_date !== payload.log_date);
+      filtered.push(payload);
+      localStorage.setItem('selene_offline_logs', JSON.stringify(filtered));
+
+      setAllLogs(prev => {
+        const copy = prev.filter(l => l.log_date !== payload.log_date);
+        copy.push(payload);
+        return copy;
+      });
+
+      showToast("Offline mode: Log queued locally and will sync when connection is restored. 💾", "success");
+      return;
+    }
+
+    setIsSyncing(true);
     try {
       const response = await fetch('/api/logs/sync', {
         method: 'POST',
@@ -229,77 +437,20 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
       });
       const data = await response.json();
       if (response.ok) {
-        alert("Daily symptoms saved successfully!");
+        showToast("Daily symptoms saved successfully! ✨", "success");
         // Re-fetch all logs to update BBT chart and predictions
-        const responseLogs = await fetch('/api/logs', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (responseLogs.ok) {
-          const logsData = await responseLogs.json();
-          if (logsData.logs) {
-            setAllLogs(logsData.logs);
-          }
-        }
-        const predResponse = await fetch(`/api/predict/next-cycle?date=${selectedDate}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (predResponse.ok) {
-          const predData = await predResponse.json();
-          if (predData.prediction) {
-            setApiPrediction(predData.prediction);
-          }
-        }
-        const insResponse = await fetch('/api/predict/insights', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (insResponse.ok) {
-          const insData = await insResponse.json();
-          if (insData && insData.insights) {
-            setInsights(insData.insights);
-          }
-        }
+        fetchLogsData();
       } else {
-        alert(data.error || "Failed to save symptoms.");
+        showToast(data.error || "Failed to save symptoms.", "error");
       }
     } catch (e) {
       console.error(e);
-      alert("Network error. Could not connect to the database.");
+      showToast("Network error. Sync failed.", "error");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
-
-  // 1. Menstrual States
-  const [menstrualSliders, setMenstrualSliders] = useState({ flow: 50, cramps: 30, energy: 40, pain: 25 });
-  const [menstrualMoods, setMenstrualMoods] = useState({ brainFog: false, anxious: false, irritable: false, sensitive: false, calm: true });
-  const [menstrualSymptoms, setMenstrualSymptoms] = useState({ sugarCravings: false, energyCrash: false, cysticAcne: false, hairShedding: false });
-  const [menstrualMeds, setMenstrualMeds] = useState([false, false, false]);
-  const [menstrualSleep, setMenstrualSleep] = useState(60);
-
-  // 2. Follicular States
-  const [follicularSliders, setFollicularSliders] = useState({ focus: 80, strength: 75, energy: 80, glow: 70 });
-  const [follicularMoods, setFollicularMoods] = useState({ motivated: true, social: false, creative: true, optimistic: false, calm: true });
-  const [follicularSymptoms, setFollicularSymptoms] = useState({ startProject: false, mentalClarity: false, skinImprovement: false, strengthWorkout: false });
-  const [follicularMeds, setFollicularMeds] = useState([false, false, false]);
-  const [follicularSleep, setFollicularSleep] = useState(75);
-
-  // 3. Ovulatory States
-  const [ovulatorySliders, setOvulatorySliders] = useState({ libido: 80, confidence: 90, social: 85, bloating: 10 });
-  const [ovulatoryMoods, setOvulatoryMoods] = useState({ magnetic: true, outgoing: true, highEnergy: true, restless: false, affectionate: false });
-  const [ovulatorySymptoms, setOvulatorySymptoms] = useState({ positiveLh: false, stretchyMucus: false, mittelschmerz: false, highStamina: false });
-  const [ovulatoryMeds, setOvulatoryMeds] = useState([false, false, false]);
-  const [ovulatorySleep, setOvulatorySleep] = useState(70);
-
-  // 4. Luteal States
-  const [lutealSliders, setLutealSliders] = useState({ bloating: 45, breastSensitivity: 35, anxiety: 50, cravings: 60 });
-  const [lutealMoods, setLutealMoods] = useState({ tearful: false, anxious: true, nesting: true, quiet: false, tired: true });
-  const [lutealSymptoms, setLutealSymptoms] = useState({ moodSwings: false, waterRetention: false, sleepDifficulty: false, boundariesSet: false });
-  const [lutealMeds, setLutealMeds] = useState([false, false, false]);
-  const [lutealSleep, setLutealSleep] = useState(55);
-
-  // Helper selectors based on active phase
-  const currentPhaseConfig = phases.find(p => p.id === activePhase);
-
-  // Toggle handlers for moods
   const handleToggleMood = (key) => {
     if (activePhase === 'menstrual') setMenstrualMoods(prev => ({ ...prev, [key]: !prev[key] }));
     if (activePhase === 'follicular') setFollicularMoods(prev => ({ ...prev, [key]: !prev[key] }));
@@ -307,7 +458,6 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
     if (activePhase === 'luteal') setLutealMoods(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Toggle handlers for symptoms
   const handleToggleSymptom = (key) => {
     if (activePhase === 'menstrual') setMenstrualSymptoms(prev => ({ ...prev, [key]: !prev[key] }));
     if (activePhase === 'follicular') setFollicularSymptoms(prev => ({ ...prev, [key]: !prev[key] }));
@@ -315,7 +465,6 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
     if (activePhase === 'luteal') setLutealSymptoms(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Toggle handlers for meds / activities
   const handleToggleMed = (idx) => {
     const update = (prev) => {
       const copy = [...prev];
@@ -328,20 +477,13 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
     if (activePhase === 'luteal') setLutealMeds(update);
   };
 
-  // Slices logs to isolate entries for the current active menstrual cycle
   const getCurrentCycleLogs = () => {
     if (!allLogs || allLogs.length === 0) return [];
-    
-    // Sort logs chronologically
     const sortedLogs = [...allLogs].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
-    
-    // Find active date index
     const selectedIdx = sortedLogs.findIndex(l => l.log_date === selectedDate);
     if (selectedIdx === -1) {
-      // Date is not logged yet, find logs up to selectedDate
       const logsBefore = sortedLogs.filter(l => new Date(l.log_date) <= new Date(selectedDate));
       if (logsBefore.length === 0) return [];
-      
       let startIdx = -1;
       for (let i = logsBefore.length - 1; i >= 0; i--) {
         if (logsBefore[i].phase === 'menstrual') {
@@ -356,8 +498,6 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
       if (startIdx === -1) return logsBefore.slice(-15);
       return logsBefore.slice(startIdx);
     }
-    
-    // Find last menstrual start relative to selection
     let startIdx = -1;
     for (let i = selectedIdx; i >= 0; i--) {
       if (sortedLogs[i].phase === 'menstrual') {
@@ -369,11 +509,9 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
         break;
       }
     }
-    
     if (startIdx === -1) {
       return sortedLogs.slice(0, selectedIdx + 1).slice(-30);
     }
-    
     let endIdx = sortedLogs.length;
     for (let i = startIdx + 1; i < sortedLogs.length; i++) {
       if (sortedLogs[i].phase === 'menstrual' && sortedLogs[i - 1].phase !== 'menstrual') {
@@ -383,22 +521,18 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
         }
       }
     }
-    
     return sortedLogs.slice(startIdx, endIdx);
   };
 
   const cycleLogs = getCurrentCycleLogs();
   
-  // Format BBT logs for chart plot coords
   const bbtData = cycleLogs
     .map(log => {
       const temp = log.basal_body_temp;
-      if (temp === null || temp === undefined) return null;
-      
+      if (temp === null || isNaN(temp)) return null;
       const startMs = new Date(cycleLogs[0].log_date).getTime();
       const currentMs = new Date(log.log_date).getTime();
       const dayOfCycle = Math.floor((currentMs - startMs) / (24 * 60 * 60 * 1000)) + 1;
-      
       return {
         dateStr: log.log_date,
         dayOfCycle,
@@ -408,26 +542,6 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
     .filter(Boolean)
     .sort((a, b) => a.dayOfCycle - b.dayOfCycle);
 
-  const getX = (day) => {
-    const minX = 1;
-    const maxX = bbtData.length > 0 ? Math.max(28, ...bbtData.map(d => d.dayOfCycle)) : 28;
-    return 45 + ((day - minX) / (maxX - minX)) * (500 - 45 - 20);
-  };
-
-  const getY = (temp) => {
-    const temps = bbtData.map(d => d.temp);
-    const minT = bbtData.length > 0 ? Math.min(97.0, ...temps) - 0.2 : 96.8;
-    const maxT = bbtData.length > 0 ? Math.max(99.0, ...temps) + 0.2 : 99.2;
-    return 165 - ((temp - minT) / (maxT - minT)) * (165 - 20); // y range from 20 to 165
-  };
-
-  // PMDD Luteal Phase transition warnings (48h crash warning)
-  const isLutealCrashIncoming = user?.has_pmdd && apiPrediction && 
-    apiPrediction.estimated_phase === 'ovulatory' && 
-    apiPrediction.days_until_period >= 14 && 
-    apiPrediction.days_until_period <= 16;
-
-  // PCOS / Endo Menorrhagia alerts (consecutive bleeding days)
   const getConsecutiveBleedingDays = () => {
     if (!allLogs || allLogs.length === 0) return 0;
     const sortedLogs = [...allLogs].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
@@ -437,44 +551,55 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
       const logsBefore = sortedLogs.filter(l => new Date(l.log_date) < new Date(selectedDate));
       let count = 1;
       for (let i = logsBefore.length - 1; i >= 0; i--) {
-        if (logsBefore[i].phase === 'menstrual') {
-          count++;
-        } else {
-          break;
-        }
+        if (logsBefore[i].phase === 'menstrual') count++;
+        else break;
       }
       return count;
     }
-    
-    let count = 0;
-    for (let i = selectedIdx; i >= 0; i--) {
-      if (sortedLogs[i].phase === 'menstrual') {
-        count++;
-      } else {
-        break;
-      }
+    if (sortedLogs[selectedIdx].phase !== 'menstrual') return 0;
+    let count = 1;
+    for (let i = selectedIdx - 1; i >= 0; i--) {
+      if (sortedLogs[i].phase === 'menstrual') count++;
+      else break;
     }
     return count;
   };
 
   const bleedingDays = getConsecutiveBleedingDays();
   const isMenorrhagiaDetected = (user?.has_pcos || user?.has_endo) && bleedingDays >= 10;
-
-  const xTicks = [1, 5, 10, 14, 20, 25, 28]; 
-  const yTicks = [97.0, 97.5, 98.0, 98.5, 99.0];
+  const isLutealCrashIncoming = user?.has_pmdd && apiPrediction && 
+    apiPrediction.estimated_phase === 'ovulatory' && 
+    apiPrediction.days_until_period >= 14 && 
+    apiPrediction.days_until_period <= 16;
 
   return (
     <motion.div 
       className="w-full min-h-screen flex flex-col font-sans transition-colors duration-500"
       style={{ backgroundColor: currentPhaseConfig.bg }}
     >
-      
+      {/* Offline Status Banner */}
+      {!isOnline && (
+        <div className="w-full bg-[#df9b6d] text-[#362113] py-2 px-6 text-center font-bold font-sans text-xs sm:text-sm shadow-inner">
+          ⚠️ You are currently offline. Selene will queue your tracking logs locally and sync automatically when connection is restored.
+        </div>
+      )}
+
+      {/* Syncing State Spinner Banner */}
+      {isSyncing && (
+        <div className="w-full bg-emerald-500 text-white py-1.5 px-6 text-center font-bold font-sans text-xs flex items-center justify-center gap-2">
+          <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          Synchronizing offline logs with server...
+        </div>
+      )}
+
       {/* Dynamic Top Banner */}
       <motion.div 
         className="w-full py-5 px-6 sm:px-12 flex flex-col md:flex-row justify-between items-center text-black border-b border-black/10 transition-colors duration-500 shadow-sm"
         style={{ backgroundColor: currentPhaseConfig.color }}
       >
-        {/* Left: Brand / Logo */}
         <button
           onClick={() => setView('landing')}
           className="text-2xl font-black text-black tracking-widest hover:opacity-80 transition-opacity cursor-pointer mb-4 md:mb-0 focus:outline-none"
@@ -482,32 +607,23 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
           SELENE
         </button>
 
-        {/* Center: Welcome message & Date */}
         <div className="flex flex-col items-center text-center mb-4 md:mb-0">
-          <h1 className="font-handwriting text-3xl sm:text-4.5xl font-bold tracking-wide leading-none">
+          <h1 className="font-handwriting text-3xl sm:text-4xl font-bold tracking-wide leading-none" style={{ color: currentPhaseConfig.textColor }}>
             Hellove, {username}
           </h1>
-          <p className="font-handwriting text-xl sm:text-2.5xl opacity-90 mt-1">
-            {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-          </p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="font-handwriting text-xl sm:text-2xl opacity-90" style={{ color: currentPhaseConfig.textColor }}>
+              {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+            </span>
+          </div>
         </div>
 
-        {/* Right: Log Out / Switcher info */}
         <div className="flex items-center gap-4 flex-wrap justify-end">
-          <span className="text-xs font-bold uppercase tracking-wider bg-black/10 px-2.5 py-1 rounded-md hidden lg:inline-block">
-            {currentPhaseConfig.name} Phase
-          </span>
-          <button
-            onClick={handleSaveLog}
-            className="border-2 border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1 rounded-full transition-all duration-300 cursor-pointer focus:outline-none bg-white/20 hover:shadow-sm"
-          >
-            Save Log
-          </button>
           <button
             onClick={() => setView('calendar')}
-            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
           >
-            Calendar
+            ← Calendar View
           </button>
           <button
             onClick={() => setView('settings')}
@@ -521,7 +637,7 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
           </button>
           <button
             onClick={onLogout}
-            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
           >
             Log Out
           </button>
@@ -529,838 +645,531 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
       </motion.div>
 
       {/* Main Container */}
-      <div className="w-full max-w-5xl mx-auto px-6 py-8 flex flex-col gap-10">
-        
-        {/* Phase Selector Segmented Control */}
-        <div className="bg-white/40 backdrop-blur-md rounded-3xl p-2.5 flex flex-wrap justify-between items-center gap-2 border border-black/5 shadow-md">
-          {phases.map((p) => {
-            const isActive = activePhase === p.id;
-            return (
-              <button
-                key={p.id}
-                onClick={() => setActivePhase(p.id)}
-                className="flex-1 min-w-[100px] py-2 px-4 rounded-2xl font-handwriting text-2xl border transition-all duration-300 relative cursor-pointer outline-none focus:outline-none"
-                style={{ 
-                  borderColor: isActive ? p.color : 'transparent',
-                  backgroundColor: isActive ? '#fff' : 'transparent',
-                  color: isActive ? p.textColor : 'rgba(0,0,0,0.5)',
-                  fontWeight: isActive ? 'bold' : 'normal',
-                  boxShadow: isActive ? '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03)' : 'none'
-                }}
-              >
-                {isActive && (
-                  <motion.div 
-                    layoutId="activeTabOutline" 
-                    className="absolute -inset-[2px] border-2 rounded-2xl pointer-events-none"
-                    style={{ borderColor: p.color }}
-                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                  />
-                )}
-                {p.name}
-              </button>
-            );
-          })}
-        </div>
+      <div className="w-full max-w-5xl mx-auto px-6 py-10 flex flex-col gap-16 flex-grow">
+        {isLoading ? (
+          <DashboardSkeleton />
+        ) : fetchError ? (
+          <div className="bg-red-50/80 border border-red-200 rounded-[2.5rem] p-10 text-center max-w-xl mx-auto flex flex-col items-center gap-4 my-20 shadow-md">
+            <p className="font-handwriting text-3xl text-red-900 font-bold">Failed to load cycle data</p>
+            <p className="font-sans text-sm text-red-700">{fetchError}</p>
+            <button 
+              onClick={fetchLogsData}
+              className="px-6 py-2 bg-[#1e2722] text-white rounded-full font-handwriting text-xl hover:bg-black/80 transition-colors"
+            >
+              Retry Connection
+            </button>
+          </div>
+        ) : (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={selectedDate}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.3 }}
+              className="flex flex-col gap-16"
+            >
+              {/* Row 1: Phase Circle & Mini Calendar */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-stretch">
+                <PhaseCircle currentPhaseConfig={currentPhaseConfig} />
 
-        {/* Phase Content Wrapper with AnimatePresence */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activePhase}
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -15 }}
-            transition={{ duration: 0.3 }}
-            className="flex flex-col gap-16"
-          >
-            
-            {/* Row 1: Menstrual Phase Circle & Calendar */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-stretch">
-              
-              {/* Menstrual Phase Circle */}
-              <div className="md:col-span-5 flex flex-col items-center justify-center bg-white/40 backdrop-blur-sm rounded-[3rem] p-8 border border-black/5 shadow-md">
-                <div 
-                  className="w-48 h-48 sm:w-56 sm:h-56 rounded-full border-[14px] flex items-center justify-center shadow-inner transition-colors duration-500"
-                  style={{ 
-                    borderColor: currentPhaseConfig.color,
-                    backgroundColor: currentPhaseConfig.bg
-                  }}
+                {/* Calendar Widget */}
+                <button
+                  onClick={() => setView('calendar')}
+                  className="md:col-span-7 bg-[#1e2722] text-white rounded-[3rem] p-6 sm:p-8 shadow-2xl flex flex-col justify-between border border-white/5 cursor-pointer focus:outline-none hover:ring-2 hover:ring-white/20 transition-all duration-300 group text-left"
                 >
-                  <span className="font-handwriting text-black text-3xl sm:text-4xl text-center leading-tight font-bold">
-                    {currentPhaseConfig.name}<br />Phase
-                  </span>
-                </div>
+                  <div className="flex justify-between items-center mb-4">
+                    <span 
+                      className="font-handwriting text-2xl sm:text-3xl font-bold transition-colors duration-500"
+                      style={{ color: currentPhaseConfig.color }}
+                    >
+                      {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }).toUpperCase()}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-sans text-xs tracking-widest uppercase text-white/50">{currentPhaseConfig.name} Window</span>
+                      <span className="font-sans text-xs text-white/30 group-hover:text-white/70 transition-colors duration-300">→ full view</span>
+                    </div>
+                  </div>
+                  
+                  {/* Calendar Grid */}
+                  <div className="grid grid-cols-7 gap-y-3 gap-x-2 text-center text-sm font-sans">
+                    {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                      <div key={i} className="text-white/40 font-bold text-xs uppercase">{d}</div>
+                    ))}
+                    
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <div key={`empty-${i}`} />
+                    ))}
+
+                    {Array.from({ length: 31 }).map((_, i) => {
+                      const day = i + 1;
+                      const isHighlight = currentPhaseConfig.calendarHighlight.includes(day);
+                      const targetDate = new Date(selectedDate + 'T00:00:00');
+                      const isSelectedDay = day === targetDate.getDate();
+
+                      return (
+                        <div key={day} className="relative flex items-center justify-center h-8 w-8 mx-auto">
+                          {isHighlight && (
+                            <motion.div 
+                              initial={{ scale: 0.8 }}
+                              animate={{ scale: 1 }}
+                              className="absolute inset-0 rounded-xl flex items-center justify-center opacity-85"
+                              style={{ backgroundColor: currentPhaseConfig.color }}
+                            >
+                              <svg viewBox="0 0 24 24" className="w-4 h-4 text-[#1e2722]" fill="currentColor">
+                                <path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z" />
+                              </svg>
+                            </motion.div>
+                          )}
+                          {isSelectedDay && (
+                            <div 
+                              className="absolute inset-0 border-2 border-dashed rounded-xl"
+                              style={{ borderColor: currentPhaseConfig.color }}
+                            />
+                          )}
+                          <span className={`relative z-10 font-bold ${isHighlight ? 'text-[#1e2722]' : 'text-white'}`}>
+                            {day}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </button>
               </div>
 
-              {/* Calendar Widget — Clickable */}
-              <button
-                onClick={() => setView('calendar')}
-                className="md:col-span-7 bg-[#1e2722] text-white rounded-[3rem] p-6 sm:p-8 shadow-2xl flex flex-col justify-between border border-white/5 cursor-pointer focus:outline-none hover:ring-2 hover:ring-white/20 transition-all duration-300 group text-left"
-              >
-                <div className="flex justify-between items-center mb-4">
-                  <span 
-                    className="font-handwriting text-2xl sm:text-3xl font-bold transition-colors duration-500"
-                    style={{ color: currentPhaseConfig.color }}
-                  >
-                    {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }).toUpperCase()}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-sans text-xs tracking-widest uppercase text-white/50">{currentPhaseConfig.name} Window</span>
-                    <span className="font-sans text-xs text-white/30 group-hover:text-white/70 transition-colors duration-300">→ full view</span>
+              {/* Row 2: Predictions & Illustration */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
+                <div 
+                  className="md:col-span-7 rounded-[2.5rem] p-8 sm:p-10 shadow-lg text-black border border-white/10 min-h-[160px] flex items-center justify-center transition-colors duration-500"
+                  style={{ backgroundColor: currentPhaseConfig.color }}
+                >
+                  <div className="text-center">
+                    <h3 className="font-handwriting text-4xl sm:text-5xl font-black italic tracking-wide mb-2">
+                      predictions & insights
+                    </h3>
+                    <p className="font-handwriting text-xl sm:text-2xl text-black/80 max-w-lg mx-auto">
+                      {apiPrediction ? apiPrediction.insight : currentPhaseConfig.prediction}
+                    </p>
+                    {apiPrediction && apiPrediction.next_period_date && (
+                      <p className="font-handwriting text-lg text-black/60 mt-3 font-semibold">
+                        next expected period: {new Date(apiPrediction.next_period_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })} ({apiPrediction.days_until_period} days remaining)
+                      </p>
+                    )}
                   </div>
                 </div>
-                
-                {/* Calendar Grid */}
-                <div className="grid grid-cols-7 gap-y-3 gap-x-2 text-center text-sm font-sans">
-                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-                    <div key={i} className="text-white/40 font-bold text-xs uppercase">{d}</div>
-                  ))}
-                  
-                  {/* Spacer empty days */}
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={`empty-${i}`} />
-                  ))}
 
-                  {/* Day numbers */}
-                  {Array.from({ length: 31 }).map((_, i) => {
-                    const day = i + 1;
-                    const isHighlight = currentPhaseConfig.calendarHighlight.includes(day);
-                    const targetDate = new Date(selectedDate + 'T00:00:00');
-                    const isSelectedDay = day === targetDate.getDate();
-
-                    return (
-                      <div key={day} className="relative flex items-center justify-center h-8 w-8 mx-auto">
-                        {isHighlight && (
-                          <motion.div 
-                            initial={{ scale: 0.8 }}
-                            animate={{ scale: 1 }}
-                            className="absolute inset-0 rounded-xl flex items-center justify-center opacity-85"
-                            style={{ backgroundColor: currentPhaseConfig.color }}
-                          >
-                            {/* Star / Sparkle icon instead of heavy cross */}
-                            <svg viewBox="0 0 24 24" className="w-4 h-4 text-[#1e2722]" fill="currentColor">
-                              <path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z" />
-                            </svg>
-                          </motion.div>
-                        )}
-                        {isSelectedDay && (
-                          <div 
-                            className="absolute inset-0 border-2 border-dashed rounded-xl"
-                            style={{ borderColor: currentPhaseConfig.color }}
-                          />
-                        )}
-                        <span className={`relative z-10 font-bold ${isHighlight ? 'text-[#1e2722]' : 'text-white'}`}>
-                          {day}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </button>
-
-            </div>
-
-            {/* Row 2: Predictions & Vibe Graphic */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
-              
-              {/* Prediction Card */}
-              <div 
-                className="md:col-span-7 rounded-[2.5rem] p-8 sm:p-10 shadow-lg text-black border border-white/10 min-h-[160px] flex items-center justify-center transition-colors duration-500"
-                style={{ backgroundColor: currentPhaseConfig.color }}
-              >
-                <div className="text-center">
-                  <h3 className="font-handwriting text-4xl sm:text-5xl font-black italic tracking-wide mb-2">
-                    predictions & insights
-                  </h3>
-                  <p className="font-handwriting text-xl sm:text-2xl text-black/80 max-w-lg mx-auto">
-                    {apiPrediction ? apiPrediction.insight : currentPhaseConfig.prediction}
-                  </p>
-                  {apiPrediction && apiPrediction.next_period_date && (
-                    <p className="font-handwriting text-lg text-black/60 mt-3 font-semibold">
-                      next expected period: {new Date(apiPrediction.next_period_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })} ({apiPrediction.days_until_period} days remaining)
+                {/* Organic Illustration Placement */}
+                <div className="md:col-span-5 flex justify-center">
+                  <div className="border border-[var(--color-selene-brown)]/15 bg-white/30 backdrop-blur-sm rounded-[3rem] p-6 w-full max-w-[280px] aspect-square flex flex-col items-center justify-center text-center shadow-md">
+                    {activePhase === 'menstrual' && <TeaIllustration />}
+                    {(activePhase === 'follicular' || activePhase === 'ovulatory') && <ReadingIllustration />}
+                    {activePhase === 'luteal' && <SleepingIllustration />}
+                    <p className="font-handwriting text-[var(--color-selene-brown)] text-lg leading-tight mt-2 italic font-semibold">
+                      {activePhase === 'menstrual' ? 'Nourishing Rest' : 
+                       activePhase === 'follicular' ? 'Rising Energy' : 
+                       activePhase === 'ovulatory' ? 'Social Sparkle' : 
+                       'Mindful Retreat'}
                     </p>
-                  )}
+                  </div>
                 </div>
               </div>
 
-              {/* Illustration Placeholder */}
-              <div className="md:col-span-5 flex justify-center">
-                <div className="border-2 border-dashed border-[var(--color-selene-brown)]/40 bg-white/30 backdrop-blur-sm rounded-[3rem] p-6 w-full max-w-[280px] aspect-square flex flex-col items-center justify-center text-center shadow-md">
-                  <svg viewBox="0 0 24 24" className="w-16 h-16 text-[var(--color-selene-brown)] mb-2" fill="none" stroke="currentColor" strokeWidth="1.2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                  </svg>
-                  <p className="font-handwriting text-[var(--color-selene-brown)] text-lg leading-tight">
-                    {currentPhaseConfig.illustrationText}
-                  </p>
+              <hr className="border-black/5" />
+
+              {/* Row 3: Phase Select */}
+              <div className="flex flex-col gap-6 text-center">
+                <span className="font-sans text-black text-xl font-bold tracking-widest uppercase">
+                  Current Tracking Phase:
+                </span>
+                <div className="flex flex-wrap justify-center gap-3">
+                  {phases.map((p) => (
+                    <motion.button
+                      key={p.id}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setActivePhase(p.id)}
+                      className={`font-handwriting text-2xl px-6 py-2 rounded-full border shadow-sm transition-all duration-300 cursor-pointer focus:outline-none ${
+                        activePhase === p.id 
+                          ? 'border-transparent font-bold' 
+                          : 'bg-white/40 border-black/5 hover:bg-white/70 text-black/60'
+                      }`}
+                      style={{ 
+                        backgroundColor: activePhase === p.id ? p.color : undefined,
+                        color: activePhase === p.id ? '#1e2722' : undefined
+                      }}
+                    >
+                      {p.name}
+                    </motion.button>
+                  ))}
                 </div>
               </div>
 
-            </div>
+              <hr className="border-black/5" />
 
-            <hr className="border-black/5" />
-
-            {/* Rule-Based Insights Section */}
-            {insights && insights.length > 0 && (
-              <div className="bg-white/40 backdrop-blur-sm rounded-[3rem] p-8 border border-black/5 shadow-md flex flex-col gap-6">
-                <h2 className="font-handwriting text-3xl text-black font-black text-center sm:text-left">
-                  hormonal pattern insights
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {insights.map((insight, idx) => {
-                    const bgColors = {
-                      cycle: 'bg-[#fff3e0]/70 border-[#ffe0b2]',
-                      mood: 'bg-[#f3e5f5]/70 border-[#e1bee7]',
-                      pain: 'bg-[#ffebee]/70 border-[#ffcdd2]',
-                      condition: 'bg-[#fff8e1]/70 border-[#ffecb3]',
-                      trend: 'bg-[#e3f2fd]/70 border-[#bbdefb]'
-                    };
-                    const textColors = {
-                      cycle: 'text-[#e65100]',
-                      mood: 'text-[#4a148c]',
-                      pain: 'text-[#b71c1c]',
-                      condition: 'text-[#ff6f00]',
-                      trend: 'text-[#0d47a1]'
-                    };
-                    const categoryBg = bgColors[insight.category] || 'bg-white/60 border-black/10';
-                    const categoryText = textColors[insight.category] || 'text-black';
-
-                    return (
-                      <motion.div
-                        key={idx}
-                        whileHover={{ y: -4 }}
-                        className={`rounded-3xl p-6 border flex flex-col justify-between shadow-sm transition-all duration-300 ${categoryBg}`}
-                      >
-                        <div>
-                          <div className="flex justify-between items-start mb-3">
-                            <span className={`text-[10px] font-sans font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/80 border border-black/5 shadow-sm ${categoryText}`}>
-                              {insight.category} • {insight.confidence} confidence
-                            </span>
-                          </div>
-                          <h4 className="font-handwriting text-2xl font-bold text-black mb-2">
-                            {insight.title}
-                          </h4>
-                          <p className="font-sans text-sm text-black/70 leading-relaxed mb-4">
-                            {insight.message}
-                          </p>
-                        </div>
-                        
-                        {/* Expandable Explanation */}
-                        <div className="mt-2 border-t border-black/5 pt-4">
-                          <details className="group cursor-pointer">
-                            <summary className="font-sans text-xs font-bold text-black/60 flex items-center justify-between focus:outline-none select-none">
-                              <span>clinical explanation</span>
-                              <svg viewBox="0 0 24 24" className="w-4 h-4 transform group-open:rotate-180 transition-transform duration-200" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                              </svg>
-                            </summary>
-                            <div className="mt-3 font-sans text-xs text-black/60 leading-normal flex flex-col gap-2">
-                              <p className="italic">"{insight.explanation}"</p>
-                              {insight.supporting_data && Object.keys(insight.supporting_data).length > 0 && (
-                                <div className="bg-white/50 rounded-xl p-3 mt-1 border border-black/5">
-                                  <div className="font-semibold text-black/70 mb-1">extracted markers:</div>
-                                  <pre className="font-mono text-[10px] text-black/50 overflow-x-auto">
-                                    {JSON.stringify(insight.supporting_data, null, 2)}
-                                  </pre>
-                                </div>
-                              )}
-                            </div>
-                          </details>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <hr className="border-black/5" />
-
-            {/* Row 3: How Are You Feeling? Sliders */}
-            <div className="flex flex-col gap-8">
-              <h2 className="font-handwriting text-black text-center text-4xl sm:text-5xl font-black tracking-wide">
-                how are you feeling??
-              </h2>
-
-              <div className="flex flex-col gap-6 w-full max-w-2xl mx-auto">
+              {/* Row 4: Dynamic Phase Symptom Sliders */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8 max-w-4xl mx-auto w-full">
                 {activePhase === 'menstrual' && (
                   <>
-                    <CustomSlider
-                      label="1. Flow Intensity"
-                      leftLabel="light/spotting"
-                      rightLabel="heavy/clotting"
-                      value={menstrualSliders.flow}
-                      onChange={(val) => setMenstrualSliders(prev => ({ ...prev, flow: val }))}
-                    />
-                    <CustomSlider
-                      label="2. Cramps"
-                      leftLabel="mild"
-                      rightLabel="severe"
-                      value={menstrualSliders.cramps}
-                      onChange={(val) => setMenstrualSliders(prev => ({ ...prev, cramps: val }))}
-                    />
-                    <CustomSlider
-                      label="3. Energy level"
-                      leftLabel="exhausted"
-                      rightLabel="energetic"
-                      value={menstrualSliders.energy}
-                      onChange={(val) => setMenstrualSliders(prev => ({ ...prev, energy: val }))}
-                    />
-                    <CustomSlider
-                      label="4. Lower back and joint pain"
-                      leftLabel="none"
-                      rightLabel="severe"
-                      value={menstrualSliders.pain}
-                      onChange={(val) => setMenstrualSliders(prev => ({ ...prev, pain: val }))}
-                    />
+                    <CustomSlider label="1. flow intensity" leftLabel="spotting" rightLabel="heavy" value={menstrualSliders.flow} onChange={(v) => setMenstrualSliders(prev => ({ ...prev, flow: v }))} />
+                    <CustomSlider label="2. pelvic cramps" leftLabel="none" rightLabel="severe" value={menstrualSliders.cramps} onChange={(v) => setMenstrualSliders(prev => ({ ...prev, cramps: v }))} />
+                    <CustomSlider label="3. physical energy" leftLabel="exhausted" rightLabel="rested" value={menstrualSliders.energy} onChange={(v) => setMenstrualSliders(prev => ({ ...prev, energy: v }))} />
+                    <CustomSlider label="4. lower back pain" leftLabel="none" rightLabel="severe" value={menstrualSliders.pain} onChange={(v) => setMenstrualSliders(prev => ({ ...prev, pain: v }))} />
                   </>
                 )}
 
                 {activePhase === 'follicular' && (
                   <>
-                    <CustomSlider
-                      label="1. Energy & Focus"
-                      leftLabel="dull/scattered"
-                      rightLabel="sharp/focused"
-                      value={follicularSliders.focus}
-                      onChange={(val) => setFollicularSliders(prev => ({ ...prev, focus: val }))}
-                    />
-                    <CustomSlider
-                      label="2. Physical Strength"
-                      leftLabel="sluggish"
-                      rightLabel="peak strength"
-                      value={follicularSliders.strength}
-                      onChange={(val) => setFollicularSliders(prev => ({ ...prev, strength: val }))}
-                    />
-                    <CustomSlider
-                      label="3. Motivation & Drive"
-                      leftLabel="unmotivated"
-                      rightLabel="highly motivated"
-                      value={follicularSliders.energy}
-                      onChange={(val) => setFollicularSliders(prev => ({ ...prev, energy: val }))}
-                    />
-                    <CustomSlider
-                      label="4. Skin Health & Glow"
-                      leftLabel="dry/active breakout"
-                      rightLabel="radiant/glowing"
-                      value={follicularSliders.glow}
-                      onChange={(val) => setFollicularSliders(prev => ({ ...prev, glow: val }))}
-                    />
+                    <CustomSlider label="1. focus / mental clarity" leftLabel="foggy" rightLabel="sharp" value={follicularSliders.focus} onChange={(v) => setFollicularSliders(prev => ({ ...prev, focus: v }))} />
+                    <CustomSlider label="2. physical strength" leftLabel="weak" rightLabel="strong" value={follicularSliders.strength} onChange={(v) => setFollicularSliders(prev => ({ ...prev, strength: v }))} />
+                    <CustomSlider label="3. baseline energy" leftLabel="low" rightLabel="driven" value={follicularSliders.energy} onChange={(v) => setFollicularSliders(prev => ({ ...prev, energy: v }))} />
+                    <CustomSlider label="4. skin glow index" leftLabel="dull" rightLabel="radiant" value={follicularSliders.glow} onChange={(v) => setFollicularSliders(prev => ({ ...prev, glow: v }))} />
                   </>
                 )}
 
                 {activePhase === 'ovulatory' && (
                   <>
-                    <CustomSlider
-                      label="1. Libido & Drive"
-                      leftLabel="none"
-                      rightLabel="peak drive"
-                      value={ovulatorySliders.libido}
-                      onChange={(val) => setOvulatorySliders(prev => ({ ...prev, libido: val }))}
-                    />
-                    <CustomSlider
-                      label="2. Confidence & Self-esteem"
-                      leftLabel="self-conscious"
-                      rightLabel="unstoppable"
-                      value={ovulatorySliders.confidence}
-                      onChange={(val) => setOvulatorySliders(prev => ({ ...prev, confidence: val }))}
-                    />
-                    <CustomSlider
-                      label="3. Social Battery"
-                      leftLabel="low/drained"
-                      rightLabel="social butterfly"
-                      value={ovulatorySliders.social}
-                      onChange={(val) => setOvulatorySliders(prev => ({ ...prev, social: val }))}
-                    />
-                    <CustomSlider
-                      label="4. Fluid Retention"
-                      leftLabel="none"
-                      rightLabel="moderate bloating"
-                      value={ovulatorySliders.bloating}
-                      onChange={(val) => setOvulatorySliders(prev => ({ ...prev, bloating: val }))}
-                    />
+                    <CustomSlider label="1. libido / sex drive" leftLabel="low" rightLabel="high" value={ovulatorySliders.libido} onChange={(v) => setOvulatorySliders(prev => ({ ...prev, libido: v }))} />
+                    <CustomSlider label="2. social confidence" leftLabel="reserved" rightLabel="bold" value={ovulatorySliders.confidence} onChange={(v) => setOvulatorySliders(prev => ({ ...prev, confidence: v }))} />
+                    <CustomSlider label="3. communication ease" leftLabel="quiet" rightLabel="eloquent" value={ovulatorySliders.social} onChange={(v) => setOvulatorySliders(prev => ({ ...prev, social: v }))} />
+                    <CustomSlider label="4. fluid bloating" leftLabel="none" rightLabel="intense" value={ovulatorySliders.bloating} onChange={(v) => setOvulatorySliders(prev => ({ ...prev, bloating: v }))} />
                   </>
                 )}
 
                 {activePhase === 'luteal' && (
                   <>
-                    <CustomSlider
-                      label="1. Bloating & Fluid retention"
-                      leftLabel="none"
-                      rightLabel="severe bloating"
-                      value={lutealSliders.bloating}
-                      onChange={(val) => setLutealSliders(prev => ({ ...prev, bloating: val }))}
-                    />
-                    <CustomSlider
-                      label="2. Breast Sensitivity"
-                      leftLabel="none"
-                      rightLabel="severe soreness"
-                      value={lutealSliders.breastSensitivity}
-                      onChange={(val) => setLutealSliders(prev => ({ ...prev, breastSensitivity: val }))}
-                    />
-                    <CustomSlider
-                      label="3. Irritability & Mood Swings"
-                      leftLabel="calm"
-                      rightLabel="highly irritable"
-                      value={lutealSliders.anxiety}
-                      onChange={(val) => setLutealSliders(prev => ({ ...prev, anxiety: val }))}
-                    />
-                    <CustomSlider
-                      label="4. Cravings (Salty vs Sweet)"
-                      leftLabel="salty/savory"
-                      rightLabel="sweet/chocolate"
-                      value={lutealSliders.cravings}
-                      onChange={(val) => setLutealSliders(prev => ({ ...prev, cravings: val }))}
-                    />
+                    <CustomSlider label="1. water bloating" leftLabel="none" rightLabel="severe" value={lutealSliders.bloating} onChange={(v) => setLutealSliders(prev => ({ ...prev, bloating: v }))} />
+                    <CustomSlider label="2. breast sensitivity" leftLabel="none" rightLabel="intense" value={lutealSliders.breastSensitivity} onChange={(v) => setLutealSliders(prev => ({ ...prev, breastSensitivity: v }))} />
+                    <CustomSlider label="3. tension / anxiety" leftLabel="calm" rightLabel="high" value={lutealSliders.anxiety} onChange={(v) => setLutealSliders(prev => ({ ...prev, anxiety: v }))} />
+                    <CustomSlider label="4. food cravings" leftLabel="none" rightLabel="strong" value={lutealSliders.cravings} onChange={(v) => setLutealSliders(prev => ({ ...prev, cravings: v }))} />
                   </>
                 )}
               </div>
-            </div>
 
-            <hr className="border-black/5" />
+              <hr className="border-black/5" />
 
-            {/* Row 4: Mood Toggles */}
-            <div className="flex flex-col gap-8">
-              <h2 className="font-handwriting text-black text-center text-4xl sm:text-5xl font-black tracking-wide">
-                mood toggles
-              </h2>
+              {/* Row 5: Dynamic Mood Swings */}
+              <div className="flex flex-col gap-6 text-center max-w-3xl mx-auto w-full">
+                <span className="font-sans text-black text-xl font-bold tracking-widest uppercase">
+                  mood overlay today:
+                </span>
+                <div className="flex flex-wrap justify-center gap-3">
+                  {activePhase === 'menstrual' && Object.keys(menstrualMoods).map((moodKey) => (
+                    <motion.button
+                      key={moodKey}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => handleToggleMood(moodKey)}
+                      className={`font-handwriting text-2xl px-5 py-1.5 rounded-2xl border transition-colors cursor-pointer focus:outline-none ${
+                        menstrualMoods[moodKey]
+                          ? 'border-transparent text-white font-bold'
+                          : 'bg-white/40 border-black/5 text-black/60'
+                      }`}
+                      style={{ backgroundColor: menstrualMoods[moodKey] ? 'var(--color-selene-brown)' : undefined }}
+                    >
+                      {moodKey.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                    </motion.button>
+                  ))}
 
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
-                
-                {/* Reading Girl Placeholder */}
-                <div className="md:col-span-5 flex justify-center order-2 md:order-1">
-                  <div className="border-2 border-dashed border-[var(--color-selene-brown)]/40 bg-white/30 backdrop-blur-sm rounded-[3rem] p-6 w-full max-w-[280px] aspect-square flex flex-col items-center justify-center text-center shadow-md">
-                    <svg viewBox="0 0 24 24" className="w-16 h-16 text-[var(--color-selene-brown)] mb-2" fill="none" stroke="currentColor" strokeWidth="1.2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                    </svg>
-                    <p className="font-handwriting text-[var(--color-selene-brown)] text-lg leading-tight">
-                      [Illustration Placeholder:<br/>Girl reading in armchair]
-                    </p>
-                  </div>
+                  {activePhase === 'follicular' && Object.keys(follicularMoods).map((moodKey) => (
+                    <motion.button
+                      key={moodKey}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => handleToggleMood(moodKey)}
+                      className={`font-handwriting text-2xl px-5 py-1.5 rounded-2xl border transition-colors cursor-pointer focus:outline-none ${
+                        follicularMoods[moodKey]
+                          ? 'border-transparent text-white font-bold'
+                          : 'bg-white/40 border-black/5 text-black/60'
+                      }`}
+                      style={{ backgroundColor: follicularMoods[moodKey] ? 'var(--color-selene-brown)' : undefined }}
+                    >
+                      {moodKey.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                    </motion.button>
+                  ))}
+
+                  {activePhase === 'ovulatory' && Object.keys(ovulatoryMoods).map((moodKey) => (
+                    <motion.button
+                      key={moodKey}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => handleToggleMood(moodKey)}
+                      className={`font-handwriting text-2xl px-5 py-1.5 rounded-2xl border transition-colors cursor-pointer focus:outline-none ${
+                        ovulatoryMoods[moodKey]
+                          ? 'border-transparent text-white font-bold'
+                          : 'bg-white/40 border-black/5 text-black/60'
+                      }`}
+                      style={{ backgroundColor: ovulatoryMoods[moodKey] ? 'var(--color-selene-brown)' : undefined }}
+                    >
+                      {moodKey.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                    </motion.button>
+                  ))}
+
+                  {activePhase === 'luteal' && Object.keys(lutealMoods).map((moodKey) => (
+                    <motion.button
+                      key={moodKey}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => handleToggleMood(moodKey)}
+                      className={`font-handwriting text-2xl px-5 py-1.5 rounded-2xl border transition-colors cursor-pointer focus:outline-none ${
+                        lutealMoods[moodKey]
+                          ? 'border-transparent text-white font-bold'
+                          : 'bg-white/40 border-black/5 text-black/60'
+                      }`}
+                      style={{ backgroundColor: lutealMoods[moodKey] ? 'var(--color-selene-brown)' : undefined }}
+                    >
+                      {moodKey.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                    </motion.button>
+                  ))}
                 </div>
+              </div>
 
-                {/* Mood Toggle Switches */}
-                <div className="md:col-span-7 flex flex-col gap-5 order-1 md:order-2">
+              <hr className="border-black/5" />
+
+              {/* Row 6: Phase Specific Core Questions */}
+              <div className="flex flex-col gap-8">
+                <h2 className="font-handwriting text-black text-center text-4xl sm:text-5xl font-black tracking-wide">
+                  {activePhase === 'menstrual' ? 'PMOS Symptoms' : 
+                   activePhase === 'follicular' ? 'Follicular Focus' : 
+                   activePhase === 'ovulatory' ? 'Ovulation Symptoms' : 
+                   'Luteal PMS Tracker'}
+                </h2>
+
+                <div className="flex flex-col gap-5 w-full max-w-2xl mx-auto">
                   {activePhase === 'menstrual' && (
                     <>
-                      <CustomToggle label="1. brain fog/lack of focus" checked={menstrualMoods.brainFog} onChange={() => handleToggleMood('brainFog')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="2. anxious/overwhelmed" checked={menstrualMoods.anxious} onChange={() => handleToggleMood('anxious')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="3. irritable" checked={menstrualMoods.irritable} onChange={() => handleToggleMood('irritable')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="4. sensitive" checked={menstrualMoods.sensitive} onChange={() => handleToggleMood('sensitive')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="5. calm" checked={menstrualMoods.calm} onChange={() => handleToggleMood('calm')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="1. Did you experience intense sugar cravings today?" checked={menstrualSymptoms.sugarCravings} onChange={() => handleToggleSymptom('sugarCravings')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="2. Did you experience a sudden energy crash after a meal?" checked={menstrualSymptoms.energyCrash} onChange={() => handleToggleSymptom('energyCrash')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="3. Notice any cystic acne flare-ups? (Jawline/chin?)" checked={menstrualSymptoms.cysticAcne} onChange={() => handleToggleSymptom('cysticAcne')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="4. Notice any unusual hair shedding or new growth?" checked={menstrualSymptoms.hairShedding} onChange={() => handleToggleSymptom('hairShedding')} activeColor={currentPhaseConfig.color} />
+                      
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-2">
+                        <span className="font-handwriting text-black text-2xl select-none leading-tight">
+                          5. What is your waking Basal Body Temperature (BBT)?
+                        </span>
+                        <input
+                          type="text"
+                          placeholder="e.g. 97.8°F"
+                          value={bbtInput}
+                          onChange={(e) => setBbtInput(e.target.value)}
+                          className="placeholder-black/50 text-black font-handwriting text-2xl px-4 py-1.5 rounded-2xl w-full sm:w-44 focus:outline-none border border-black/10 focus:bg-white transition-colors duration-200 text-center shadow-sm"
+                          style={{ backgroundColor: currentPhaseConfig.color }}
+                        />
+                      </div>
                     </>
                   )}
 
                   {activePhase === 'follicular' && (
                     <>
-                      <CustomToggle label="1. motivated & active" checked={follicularMoods.motivated} onChange={() => handleToggleMood('motivated')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="2. social & talkative" checked={follicularMoods.social} onChange={() => handleToggleMood('social')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="3. creative & inspired" checked={follicularMoods.creative} onChange={() => handleToggleMood('creative')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="4. optimistic & hopeful" checked={follicularMoods.optimistic} onChange={() => handleToggleMood('optimistic')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="5. calm & stable" checked={follicularMoods.calm} onChange={() => handleToggleMood('calm')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="1. Did you start a new task, project, or habit today?" checked={follicularSymptoms.startProject} onChange={() => handleToggleSymptom('startProject')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="2. Did you feel a strong sense of morning mental clarity?" checked={follicularSymptoms.mentalClarity} onChange={() => handleToggleSymptom('mentalClarity')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="3. Notice skin improvements or active reduction in breakouts?" checked={follicularSymptoms.skinImprovement} onChange={() => handleToggleSymptom('skinImprovement')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="4. Did you complete a strength-based or cardiovascular workout?" checked={follicularSymptoms.strengthWorkout} onChange={() => handleToggleSymptom('strengthWorkout')} activeColor={currentPhaseConfig.color} />
                     </>
                   )}
 
                   {activePhase === 'ovulatory' && (
                     <>
-                      <CustomToggle label="1. magnetic & charming" checked={ovulatoryMoods.magnetic} onChange={() => handleToggleMood('magnetic')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="2. outgoing & expressive" checked={ovulatoryMoods.outgoing} onChange={() => handleToggleMood('outgoing')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="3. high energy & dynamic" checked={ovulatoryMoods.highEnergy} onChange={() => handleToggleMood('highEnergy')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="4. restless & easily excited" checked={ovulatoryMoods.restless} onChange={() => handleToggleMood('restless')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="5. affectionate & loving" checked={ovulatoryMoods.affectionate} onChange={() => handleToggleMood('affectionate')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="1. Did you log a positive LH surge (Ovulation test kit)?" checked={ovulatorySymptoms.positiveLh} onChange={() => handleToggleSymptom('positiveLh')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="2. Is cervical fluid clear and stretchy (egg-white consistency)?" checked={ovulatorySymptoms.stretchyMucus} onChange={() => handleToggleSymptom('stretchyMucus')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="3. Did you experience mild ovulatory twinges (mittelschmerz)?" checked={ovulatorySymptoms.mittelschmerz} onChange={() => handleToggleSymptom('mittelschmerz')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="4. Did you experience high physical stamina or high libido?" checked={ovulatorySymptoms.highStamina} onChange={() => handleToggleSymptom('highStamina')} activeColor={currentPhaseConfig.color} />
                     </>
                   )}
 
                   {activePhase === 'luteal' && (
                     <>
-                      <CustomToggle label="1. tearful & highly sensitive" checked={lutealMoods.tearful} onChange={() => handleToggleMood('tearful')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="2. anxious & overthinking" checked={lutealMoods.anxious} onChange={() => handleToggleMood('anxious')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="3. nesting / homebody vibe" checked={lutealMoods.nesting} onChange={() => handleToggleMood('nesting')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="4. quiet & reflective" checked={lutealMoods.quiet} onChange={() => handleToggleMood('quiet')} activeColor={currentPhaseConfig.color} />
-                      <CustomToggle label="5. tired & slower-paced" checked={lutealMoods.tired} onChange={() => handleToggleMood('tired')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="1. Did you experience sudden mood shifts or crying spells?" checked={lutealSymptoms.moodSwings} onChange={() => handleToggleSymptom('moodSwings')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="2. Notice any swelling, tender breasts, or water retention?" checked={lutealSymptoms.waterRetention} onChange={() => handleToggleSymptom('waterRetention')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="3. Did you experience difficulty falling asleep or early waking?" checked={lutealSymptoms.sleepDifficulty} onChange={() => handleToggleSymptom('sleepDifficulty')} activeColor={currentPhaseConfig.color} />
+                      <CustomToggle label="4. Did you intentionally set boundaries and seek quiet rest?" checked={lutealSymptoms.boundariesSet} onChange={() => handleToggleSymptom('boundariesSet')} activeColor={currentPhaseConfig.color} />
                     </>
                   )}
                 </div>
-
               </div>
-            </div>
 
-            <hr className="border-black/5" />
+              <hr className="border-black/5" />
 
-            {/* Row 5: Phase Specific Core Questions */}
-            <div className="flex flex-col gap-8">
-              <h2 className="font-handwriting text-black text-center text-4xl sm:text-5xl font-black tracking-wide">
-                {activePhase === 'menstrual' ? 'PMOS Symptoms' : 
-                 activePhase === 'follicular' ? 'Follicular Focus' : 
-                 activePhase === 'ovulatory' ? 'Ovulation Symptoms' : 
-                 'Luteal PMS Tracker'}
-              </h2>
+              {/* Row 7: Lifestyle Actions */}
+              <div className="flex flex-col gap-8 pb-12">
+                <h2 className="font-handwriting text-black text-center text-4xl sm:text-5xl font-black tracking-wide">
+                  Lifestyle actions
+                </h2>
 
-              <div className="flex flex-col gap-5 w-full max-w-2xl mx-auto">
-                {activePhase === 'menstrual' && (
-                  <>
-                    <CustomToggle label="1. Did you experience intense sugar cravings today?" checked={menstrualSymptoms.sugarCravings} onChange={() => handleToggleSymptom('sugarCravings')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="2. Did you experience a sudden energy crash after a meal?" checked={menstrualSymptoms.energyCrash} onChange={() => handleToggleSymptom('energyCrash')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="3. Notice any cystic acne flare-ups? (Jawline/chin?)" checked={menstrualSymptoms.cysticAcne} onChange={() => handleToggleSymptom('cysticAcne')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="4. Notice any unusual hair shedding or new growth?" checked={menstrualSymptoms.hairShedding} onChange={() => handleToggleSymptom('hairShedding')} activeColor={currentPhaseConfig.color} />
-                    
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-2">
-                      <span className="font-handwriting text-black text-2xl select-none leading-tight">
-                        5. What is your waking Basal Body Temperature (BBT)?
-                      </span>
-                      <input
-                        type="text"
-                        placeholder="e.g. 97.8°F"
-                        value={bbtInput}
-                        onChange={(e) => setBbtInput(e.target.value)}
-                        className="placeholder-black/50 text-black font-handwriting text-2xl px-4 py-1.5 rounded-2xl w-full sm:w-44 focus:outline-none border border-black/10 focus:bg-white transition-colors duration-200 text-center shadow-sm"
-                        style={{ backgroundColor: currentPhaseConfig.color }}
-                      />
-                    </div>
-                  </>
-                )}
-
-                {activePhase === 'follicular' && (
-                  <>
-                    <CustomToggle label="1. Did you start a new task, project, or habit today?" checked={follicularSymptoms.startProject} onChange={() => handleToggleSymptom('startProject')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="2. Did you feel a strong sense of morning mental clarity?" checked={follicularSymptoms.mentalClarity} onChange={() => handleToggleSymptom('mentalClarity')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="3. Notice skin improvements or active reduction in breakouts?" checked={follicularSymptoms.skinImprovement} onChange={() => handleToggleSymptom('skinImprovement')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="4. Did you complete a strength-based or cardiovascular workout?" checked={follicularSymptoms.strengthWorkout} onChange={() => handleToggleSymptom('strengthWorkout')} activeColor={currentPhaseConfig.color} />
-                  </>
-                )}
-
-                {activePhase === 'ovulatory' && (
-                  <>
-                    <CustomToggle label="1. Did you log a positive LH surge (Ovulation test kit)?" checked={ovulatorySymptoms.positiveLh} onChange={() => handleToggleSymptom('positiveLh')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="2. Is cervical fluid clear and stretchy (egg-white consistency)?" checked={ovulatorySymptoms.stretchyMucus} onChange={() => handleToggleSymptom('stretchyMucus')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="3. Did you experience mild ovulatory twinges (mittelschmerz)?" checked={ovulatorySymptoms.mittelschmerz} onChange={() => handleToggleSymptom('mittelschmerz')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="4. Did you experience high physical stamina or high libido?" checked={ovulatorySymptoms.highStamina} onChange={() => handleToggleSymptom('highStamina')} activeColor={currentPhaseConfig.color} />
-                  </>
-                )}
-
-                {activePhase === 'luteal' && (
-                  <>
-                    <CustomToggle label="1. Did you experience sudden mood shifts or crying spells?" checked={lutealSymptoms.moodSwings} onChange={() => handleToggleSymptom('moodSwings')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="2. Notice any swelling, tender breasts, or water retention?" checked={lutealSymptoms.waterRetention} onChange={() => handleToggleSymptom('waterRetention')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="3. Did you experience difficulty falling asleep or early waking?" checked={lutealSymptoms.sleepDifficulty} onChange={() => handleToggleSymptom('sleepDifficulty')} activeColor={currentPhaseConfig.color} />
-                    <CustomToggle label="4. Did you intentionally set boundaries and seek quiet rest?" checked={lutealSymptoms.boundariesSet} onChange={() => handleToggleSymptom('boundariesSet')} activeColor={currentPhaseConfig.color} />
-                  </>
-                )}
-              </div>
-            </div>
-
-            <hr className="border-black/5" />
-
-            {/* Row 6: Lifestyle Actions */}
-            <div className="flex flex-col gap-8 pb-12">
-              <h2 className="font-handwriting text-black text-center text-4xl sm:text-5xl font-black tracking-wide">
-                Lifestyle actions
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
-                
-                {/* Lifestyle Content */}
-                <div className="md:col-span-7 flex flex-col gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
                   
-                  <div className="flex flex-col gap-4">
-                    {activePhase === 'menstrual' && (
-                      <>
-                        <div className="flex items-center gap-2">
-                          <span className="font-handwriting text-black text-2xl">
-                            1. Basal Body Temperature?
-                          </span>
-                          {bbtInput ? (
-                            <span 
-                              className="font-handwriting text-[#1e2722] text-2xl font-bold px-3 py-0.5 rounded-xl transition-colors duration-500"
-                              style={{ backgroundColor: currentPhaseConfig.color }}
-                            >
-                              {bbtInput}
+                  {/* Lifestyle Content */}
+                  <div className="md:col-span-7 flex flex-col gap-6">
+                    
+                    <div className="flex flex-col gap-4">
+                      {activePhase === 'menstrual' && (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="font-handwriting text-black text-2xl">
+                              1. Basal Body Temperature?
                             </span>
-                          ) : (
-                            <span className="font-handwriting text-black/40 text-xl italic">(not logged)</span>
-                          )}
-                        </div>
+                            {bbtInput ? (
+                              <span 
+                                className="font-handwriting text-[#1e2722] text-2xl font-bold px-3 py-0.5 rounded-xl transition-colors duration-500"
+                                style={{ backgroundColor: currentPhaseConfig.color }}
+                              >
+                                {bbtInput}
+                              </span>
+                            ) : (
+                              <span className="font-handwriting text-black/40 text-xl italic">(not logged)</span>
+                            )}
+                          </div>
 
+                          <div className="flex flex-col gap-3 pl-4">
+                            <span className="font-handwriting text-black text-2xl">2. Medication/relief used:</span>
+                            <div className="flex flex-col gap-2.5 pl-4">
+                              <CustomToggle label="• Painkiller/NSAID" checked={menstrualMeds[0]} onChange={() => handleToggleMed(0)} activeColor={currentPhaseConfig.color} />
+                              <CustomToggle label="• Heating pad" checked={menstrualMeds[1]} onChange={() => handleToggleMed(1)} activeColor={currentPhaseConfig.color} />
+                              <CustomToggle label="• Herbal tea/Supplements" checked={menstrualMeds[2]} onChange={() => handleToggleMed(2)} activeColor={currentPhaseConfig.color} />
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {activePhase === 'follicular' && (
                         <div className="flex flex-col gap-3 pl-4">
-                          <span className="font-handwriting text-black text-2xl">2. Medication/relief used:</span>
+                          <span className="font-handwriting text-black text-2xl">1. Core Follicular Activities:</span>
                           <div className="flex flex-col gap-2.5 pl-4">
-                            <CustomToggle label="• Painkiller/NSAID" checked={menstrualMeds[0]} onChange={() => handleToggleMed(0)} activeColor={currentPhaseConfig.color} />
-                            <CustomToggle label="• Heating pad" checked={menstrualMeds[1]} onChange={() => handleToggleMed(1)} activeColor={currentPhaseConfig.color} />
-                            <CustomToggle label="• Herbal tea/Supplements" checked={menstrualMeds[2]} onChange={() => handleToggleMed(2)} activeColor={currentPhaseConfig.color} />
+                            <CustomToggle label="• Heavy Strength Training" checked={follicularMeds[0]} onChange={() => handleToggleMed(0)} activeColor={currentPhaseConfig.color} />
+                            <CustomToggle label="• Detailed Planning & Goal setting" checked={follicularMeds[1]} onChange={() => handleToggleMed(1)} activeColor={currentPhaseConfig.color} />
+                            <CustomToggle label="• Social engagement / Networking" checked={follicularMeds[2]} onChange={() => handleToggleMed(2)} activeColor={currentPhaseConfig.color} />
                           </div>
                         </div>
-                      </>
-                    )}
+                      )}
 
-                    {activePhase === 'follicular' && (
-                      <div className="flex flex-col gap-3 pl-4">
-                        <span className="font-handwriting text-black text-2xl">1. Core Follicular Activities:</span>
-                        <div className="flex flex-col gap-2.5 pl-4">
-                          <CustomToggle label="• Heavy Strength Training" checked={follicularMeds[0]} onChange={() => handleToggleMed(0)} activeColor={currentPhaseConfig.color} />
-                          <CustomToggle label="• Detailed Planning & Goal setting" checked={follicularMeds[1]} onChange={() => handleToggleMed(1)} activeColor={currentPhaseConfig.color} />
-                          <CustomToggle label="• Social engagement / Networking" checked={follicularMeds[2]} onChange={() => handleToggleMed(2)} activeColor={currentPhaseConfig.color} />
+                      {activePhase === 'ovulatory' && (
+                        <div className="flex flex-col gap-3 pl-4">
+                          <span className="font-handwriting text-black text-2xl">1. Core Ovulatory Activities:</span>
+                          <div className="flex flex-col gap-2.5 pl-4">
+                            <CustomToggle label="• High Intensity Cardio/HIIT" checked={ovulatoryMeds[0]} onChange={() => handleToggleMed(0)} activeColor={currentPhaseConfig.color} />
+                            <CustomToggle label="• Date night / Social gathering" checked={ovulatoryMeds[1]} onChange={() => handleToggleMed(1)} activeColor={currentPhaseConfig.color} />
+                            <CustomToggle label="• High stamina task execution" checked={ovulatoryMeds[2]} onChange={() => handleToggleMed(2)} activeColor={currentPhaseConfig.color} />
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    {activePhase === 'ovulatory' && (
-                      <div className="flex flex-col gap-3 pl-4">
-                        <span className="font-handwriting text-black text-2xl">1. Core Ovulatory Activities:</span>
-                        <div className="flex flex-col gap-2.5 pl-4">
-                          <CustomToggle label="• High Intensity Cardio/HIIT" checked={ovulatoryMeds[0]} onChange={() => handleToggleMed(0)} activeColor={currentPhaseConfig.color} />
-                          <CustomToggle label="• Date night / Social gathering" checked={ovulatoryMeds[1]} onChange={() => handleToggleMed(1)} activeColor={currentPhaseConfig.color} />
-                          <CustomToggle label="• High stamina task execution" checked={ovulatoryMeds[2]} onChange={() => handleToggleMed(2)} activeColor={currentPhaseConfig.color} />
+                      {activePhase === 'luteal' && (
+                        <div className="flex flex-col gap-3 pl-4">
+                          <span className="font-handwriting text-black text-2xl">1. Core Luteal Activities:</span>
+                          <div className="flex flex-col gap-2.5 pl-4">
+                            <CustomToggle label="• Gentle Yoga / Yin Stretching" checked={lutealMeds[0]} onChange={() => handleToggleMed(0)} activeColor={currentPhaseConfig.color} />
+                            <CustomToggle label="• Warm Epsom salt bath / Sauna" checked={lutealMeds[1]} onChange={() => handleToggleMed(1)} activeColor={currentPhaseConfig.color} />
+                            <CustomToggle label="• Magnesium / Sleep tea support" checked={lutealMeds[2]} onChange={() => handleToggleMed(2)} activeColor={currentPhaseConfig.color} />
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
-                    {activePhase === 'luteal' && (
-                      <div className="flex flex-col gap-3 pl-4">
-                        <span className="font-handwriting text-black text-2xl">1. Core Luteal Activities:</span>
-                        <div className="flex flex-col gap-2.5 pl-4">
-                          <CustomToggle label="• Gentle Yoga / Yin Stretching" checked={lutealMeds[0]} onChange={() => handleToggleMed(0)} activeColor={currentPhaseConfig.color} />
-                          <CustomToggle label="• Warm Epsom salt bath / Sauna" checked={lutealMeds[1]} onChange={() => handleToggleMed(1)} activeColor={currentPhaseConfig.color} />
-                          <CustomToggle label="• Magnesium / Sleep tea support" checked={lutealMeds[2]} onChange={() => handleToggleMed(2)} activeColor={currentPhaseConfig.color} />
-                        </div>
-                      </div>
-                    )}
+                    {/* Sleep Quality Slider */}
+                    <div className="mt-4">
+                      <CustomSlider
+                        label="3. sleep quality"
+                        leftLabel="restless"
+                        rightLabel="deep"
+                        value={
+                          activePhase === 'menstrual' ? menstrualSleep :
+                          activePhase === 'follicular' ? follicularSleep :
+                          activePhase === 'ovulatory' ? ovulatorySleep :
+                          lutealSleep
+                        }
+                        onChange={(val) => {
+                          if (activePhase === 'menstrual') setMenstrualSleep(val);
+                          if (activePhase === 'follicular') setFollicularSleep(val);
+                          if (activePhase === 'ovulatory') setOvulatorySleep(val);
+                          if (activePhase === 'luteal') setLutealSleep(val);
+                        }}
+                      />
+                    </div>
+
                   </div>
 
-                  {/* Sleep Quality Slider */}
-                  <div className="mt-4">
-                    <CustomSlider
-                      label="3. sleep quality"
-                      leftLabel="restless"
-                      rightLabel="deep"
-                      value={
-                        activePhase === 'menstrual' ? menstrualSleep :
-                        activePhase === 'follicular' ? follicularSleep :
-                        activePhase === 'ovulatory' ? ovulatorySleep :
-                        lutealSleep
-                      }
-                      onChange={(val) => {
-                        if (activePhase === 'menstrual') setMenstrualSleep(val);
-                        if (activePhase === 'follicular') setFollicularSleep(val);
-                        if (activePhase === 'ovulatory') setOvulatorySleep(val);
-                        if (activePhase === 'luteal') setLutealSleep(val);
-                      }}
-                    />
+                  {/* Sleeping Illustration */}
+                  <div className="md:col-span-5 flex justify-center">
+                    <div className="border border-[var(--color-selene-brown)]/15 bg-white/30 backdrop-blur-sm rounded-[3rem] p-6 w-full max-w-[280px] aspect-square flex flex-col items-center justify-center text-center shadow-md">
+                      <SleepingIllustration />
+                      <p className="font-handwriting text-[var(--color-selene-brown)] text-lg leading-tight mt-2 italic font-semibold">
+                        Snooze Quality
+                      </p>
+                    </div>
                   </div>
 
                 </div>
-
-                {/* Sleeping Girl Placeholder */}
-                <div className="md:col-span-5 flex justify-center">
-                  <div className="border-2 border-dashed border-[var(--color-selene-brown)]/40 bg-white/30 backdrop-blur-sm rounded-[3rem] p-6 w-full max-w-[280px] aspect-square flex flex-col items-center justify-center text-center shadow-md">
-                    <svg viewBox="0 0 24 24" className="w-16 h-16 text-[var(--color-selene-brown)] mb-2" fill="none" stroke="currentColor" strokeWidth="1.2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                    </svg>
-                    <p className="font-handwriting text-[var(--color-selene-brown)] text-lg leading-tight">
-                      [Illustration Placeholder:<br/>Girl sleeping in armchair]
-                    </p>
-                  </div>
-                </div>
-
               </div>
-            </div>
 
-            {/* Save Log Button at the bottom */}
-            <div className="flex justify-center pt-8 pb-4">
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleSaveLog}
-                className="bg-[#1e2722] text-white hover:bg-[#2a3830] font-handwriting text-3xl px-12 py-3.5 rounded-full shadow-2xl transition-all duration-300 cursor-pointer focus:outline-none font-bold"
-              >
-                Save Symptom Log
-              </motion.button>
-            </div>
+              {/* Save Log Button at the bottom */}
+              <div className="flex justify-center pt-8 pb-4">
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  disabled={isSyncing}
+                  onClick={handleSaveLog}
+                  className="bg-[#1e2722] text-white hover:bg-[#2a3830] font-handwriting text-3xl px-12 py-3.5 rounded-full shadow-2xl transition-all duration-300 cursor-pointer focus:outline-none font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSyncing ? "Saving Entry..." : "Save Symptom Log"}
+                </motion.button>
+              </div>
 
-          </motion.div>
-        </AnimatePresence>
+            </motion.div>
+          </AnimatePresence>
+        )}
 
         {/* Universal Cycle Vitals & BBT Trends Section */}
-        <div className="flex flex-col gap-10">
-          
-          {/* Alerts & Warnings Panel */}
-          {(isLutealCrashIncoming || isMenorrhagiaDetected) && (
-            <div className="flex flex-col gap-4">
-              
-              {/* PMDD Luteal Transition Warning */}
-              {isLutealCrashIncoming && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-[#df9b6d]/20 border border-[#df9b6d] rounded-[2rem] p-6 sm:p-8 flex gap-5 items-start shadow-md text-black animate-fade-in"
-                >
-                  <div className="p-3 bg-[#df9b6d] rounded-full text-white mt-1 shrink-0">
-                    <svg viewBox="0 0 24 24" className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                  </div>
+        {!isLoading && !fetchError && (
+          <div className="flex flex-col gap-10">
+            <AlertsPanel 
+              isLutealCrashIncoming={isLutealCrashIncoming} 
+              isMenorrhagiaDetected={isMenorrhagiaDetected} 
+              bleedingDays={bleedingDays} 
+            />
+
+            {/* Vitals Input & BBT Trend Chart */}
+            <div className="bg-white/40 backdrop-blur-md rounded-[3.5rem] p-8 sm:p-10 border border-black/5 shadow-md grid grid-cols-1 md:grid-cols-12 gap-10 items-start">
+              {/* Left Column: Waking Vitals Log Form */}
+              <div className="md:col-span-4 flex flex-col gap-6">
+                <div>
+                  <h3 className="font-handwriting text-black text-4xl font-black uppercase tracking-wide leading-none mb-1">
+                    waking vitals
+                  </h3>
+                  <p className="font-handwriting text-black/60 text-xl">
+                    Log daily basal temperature
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1.5">
-                    <h4 className="font-handwriting text-3xl font-black uppercase tracking-wide">
-                      PMDD Luteal Phase Transition Alert (Expected in ~48 hours)
-                    </h4>
-                    <p className="font-handwriting text-2xl text-black/85 leading-snug">
-                      Progesterone shifts will begin in approximately 48 hours. For users tracking PMDD, this transition (the luteal drop) can cause sudden changes in neuro-steroid activity, bringing on feelings of anxiety, fatigue, or mood shifts. Establish gentle boundaries, stock up on comfort foods, and prioritize emotional buffer time.
-                    </p>
+                    <span className="font-sans text-xs tracking-widest uppercase font-bold text-black/50">basal body temperature</span>
+                    <input 
+                      type="text"
+                      placeholder="e.g. 97.80"
+                      value={bbtInput}
+                      onChange={(e) => setBbtInput(e.target.value)}
+                      className="w-full bg-white/70 border border-black/10 rounded-2xl px-4 py-3 font-mono text-lg text-black focus:outline-none focus:bg-white shadow-inner"
+                    />
                   </div>
-                </motion.div>
-              )}
-
-              {/* PCOS/Endo Prolonged Bleeding (Menorrhagia) Warning */}
-              {isMenorrhagiaDetected && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-red-500/10 border border-red-500 rounded-[2rem] p-6 sm:p-8 flex gap-5 items-start shadow-md text-black animate-fade-in"
-                >
-                  <div className="p-3 bg-red-500 rounded-full text-white mt-1 shrink-0">
-                    <svg viewBox="0 0 24 24" className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <h4 className="font-handwriting text-3xl font-black uppercase tracking-wide text-red-600">
-                      Prolonged Bleeding Warning (Menorrhagia detected)
-                    </h4>
-                    <p className="font-handwriting text-2xl text-black/85 leading-snug">
-                      You have logged menstrual flow for {bleedingDays} consecutive days. For individuals managing PCOS or Endometriosis, prolonged bleeding can cause iron deficiency anemia and physical exhaustion. Consider tracking flow volume closely and consulting your primary care provider if bleeding continues.
-                    </p>
-                  </div>
-                </motion.div>
-              )}
-
-            </div>
-          )}
-
-          {/* Vitals Input & BBT Trend Chart */}
-          <div className="bg-white/40 backdrop-blur-md rounded-[3.5rem] p-8 sm:p-10 border border-black/5 shadow-md grid grid-cols-1 md:grid-cols-12 gap-10 items-start">
-            
-            {/* Left Column: Waking Vitals Log Form */}
-            <div className="md:col-span-4 flex flex-col gap-6">
-              <div>
-                <h3 className="font-handwriting text-black text-4xl font-black uppercase tracking-wide leading-none mb-2">
-                  waking vitals
-                </h3>
-                <p className="font-handwriting text-black/60 text-xl leading-snug">
-                  Log your basal body temperature (BBT) daily to track cycle transitions.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <label className="font-handwriting text-black text-2.5xl font-bold select-none">
-                  Waking Temp:
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="text"
-                    placeholder="e.g. 97.8"
-                    value={bbtInput}
-                    onChange={(e) => setBbtInput(e.target.value)}
-                    className="placeholder-black/40 text-black font-handwriting text-2.5xl px-4 py-2.5 rounded-2xl w-full focus:outline-none border border-black/10 focus:bg-white transition-colors duration-200 text-center shadow-inner bg-white/50"
-                  />
-                  <span className="font-handwriting text-black text-4.5xl font-black select-none">
-                    °F
-                  </span>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    disabled={isSyncing}
+                    onClick={handleSaveLog}
+                    className="w-full bg-[#1e2722] hover:bg-[#2a3830] text-white font-handwriting text-2xl py-3 rounded-2xl shadow-md transition-colors duration-200 cursor-pointer focus:outline-none font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSyncing ? "Syncing..." : "Update Waking Temp"}
+                  </motion.button>
                 </div>
               </div>
 
-              <div className="bg-black/5 rounded-2xl p-4 flex flex-col gap-1.5 border border-black/5">
-                <span className="font-handwriting text-black/70 text-lg font-bold">
-                  Clinical Tips:
-                </span>
-                <p className="font-handwriting text-black/60 text-lg leading-tight">
-                  • Measure immediately upon waking, before getting out of bed.
-                </p>
-                <p className="font-handwriting text-black/60 text-lg leading-tight">
-                  • A sustained temperature rise of 0.5°F - 1.0°F confirms successful ovulation.
-                </p>
-              </div>
+              {/* Right Column: Chart */}
+              <BBTTrendChart bbtData={bbtData} />
             </div>
 
-            {/* Right Column: Basal Temperature Trend Chart */}
-            <div className="md:col-span-8 flex flex-col gap-4 w-full">
-              <div>
-                <h3 className="font-handwriting text-black text-4xl font-black uppercase tracking-wide leading-none mb-1">
-                  basal body temp trend
-                </h3>
-                <p className="font-handwriting text-black/60 text-xl">
-                  Cycle Days (D) vs Waking Temperature (°F)
-                </p>
-              </div>
-
-              <div className="w-full bg-white/70 border border-black/10 rounded-[2.5rem] p-6 shadow-inner relative min-h-[240px] flex items-center justify-center">
-                <svg viewBox="0 0 500 200" className="w-full h-full overflow-visible">
-                  
-                  {/* Grid Lines & Y ticks */}
-                  {yTicks.map((tick, idx) => (
-                    <g key={idx}>
-                      <line x1={45} y1={getY(tick)} x2={480} y2={getY(tick)} stroke="rgba(0,0,0,0.07)" strokeDasharray="3,3" />
-                      <text x={12} y={getY(tick) + 4} className="font-sans text-[10px] font-bold fill-black/40">{tick.toFixed(1)}°</text>
-                    </g>
-                  ))}
-
-                  {/* X Axis ticks */}
-                  {xTicks.map((tick, idx) => (
-                    <g key={idx}>
-                      <line x1={getX(tick)} y1={20} x2={getX(tick)} y2={165} stroke="rgba(0,0,0,0.03)" />
-                      <text x={getX(tick)} y={185} textAnchor="middle" className="font-sans text-[10px] font-bold fill-black/40">D{tick}</text>
-                    </g>
-                  ))}
-
-                  {/* Biphasic Shift Baseline (dashed red line) */}
-                  <line x1={45} y1={getY(97.8)} x2={480} y2={getY(97.8)} stroke="rgba(220,38,38,0.25)" strokeWidth={1.5} strokeDasharray="4,4" />
-                  <text x={330} y={getY(97.8) - 4} className="font-handwriting text-lg fill-red-500/70 font-semibold">luteal shift baseline (97.8°F)</text>
-
-                  {/* Connected Temperature Trend Line */}
-                  {bbtData.length > 1 && (
-                    <path
-                      d={bbtData.map((d, idx) => `${idx === 0 ? 'M' : 'L'} ${getX(d.dayOfCycle)} ${getY(d.temp)}`).join(' ')}
-                      fill="none"
-                      stroke="var(--color-selene-brown)"
-                      strokeWidth={3}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  )}
-
-                  {/* Temperature Data Dots */}
-                  {bbtData.map((d, idx) => (
-                    <g key={idx} className="group/dot cursor-pointer">
-                      <circle
-                        cx={getX(d.dayOfCycle)}
-                        cy={getY(d.temp)}
-                        r={4.5}
-                        fill="#1e2722"
-                        stroke="white"
-                        strokeWidth={2}
-                      />
-                      <title>{`Day ${d.dayOfCycle}: ${d.temp}°F (${new Date(d.dateStr).toLocaleDateString('en-GB', {day: 'numeric', month: 'short'})})`}</title>
-                    </g>
-                  ))}
-
-                  {/* Empty state overlay inside SVG if no logs exist */}
-                  {bbtData.length === 0 && (
-                    <foreignObject x={45} y={20} width={435} height={145}>
-                      <div className="w-full h-full flex flex-col items-center justify-center text-center p-4">
-                        <p className="font-handwriting text-black/60 text-2xl font-bold leading-tight">
-                          No Basal Body Temperature logs found for this cycle.
-                        </p>
-                        <p className="font-handwriting text-black/40 text-lg italic mt-1 leading-snug">
-                          Record waking temp daily to visualize the biphasic shift indicating ovulation.
-                        </p>
-                      </div>
-                    </foreignObject>
-                  )}
-                  
-                </svg>
-              </div>
-            </div>
-
+            {/* Insights Section */}
+            <PatternInsights insights={insights} />
           </div>
-
-        </div>
-
+        )}
       </div>
 
       {/* Footer */}
@@ -1375,72 +1184,6 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
           <span className="font-handwriting text-white/50 text-sm">© 2026 selene</span>
         </div>
       </footer>
-
     </motion.div>
-  );
-}
-
-// Helper functions
-
-// Custom Slider Component matching the mockup styling
-function CustomSlider({ label, leftLabel, rightLabel, value, onChange }) {
-  return (
-    <div className="flex flex-col gap-1 w-full">
-      <span className="font-handwriting text-black text-2xl pl-1">{label}</span>
-      <div className="relative w-full flex items-center h-6">
-        
-        {/* Track background */}
-        <div className="absolute inset-x-0 h-2 bg-[#694b3a]/30 rounded-full overflow-hidden">
-          {/* Active red bar */}
-          <div 
-            className="h-full bg-red-500 rounded-full" 
-            style={{ width: `${value}%` }}
-          />
-        </div>
-        
-        {/* Invisible range input for dragging */}
-        <input 
-          type="range" 
-          min="0" 
-          max="100" 
-          value={value} 
-          onChange={(e) => onChange(Number(e.target.value))}
-          className="absolute inset-x-0 w-full h-full opacity-0 cursor-pointer z-20"
-        />
-        
-        {/* Thumb */}
-        <div 
-          className="absolute w-5 h-5 bg-black rounded-full border-2 border-white pointer-events-none -translate-x-1/2 z-10 shadow"
-          style={{ left: `${value}%` }}
-        />
-      </div>
-      
-      {/* Labels */}
-      <div className="flex justify-between px-1">
-        <span className="font-handwriting text-black/70 text-lg italic">{leftLabel}</span>
-        <span className="font-handwriting text-black/70 text-lg italic">{rightLabel}</span>
-      </div>
-    </div>
-  );
-}
-
-// Custom Toggle Component matching the mockup styling
-function CustomToggle({ label, checked, onChange, activeColor }) {
-  return (
-    <div className="flex items-center justify-between w-full gap-4">
-      <span className="font-handwriting text-black text-2xl select-none leading-tight">{label}</span>
-      <button
-        type="button"
-        onClick={onChange}
-        className="w-14 h-7 rounded-full bg-[#d2d2d2] relative transition-colors duration-200 focus:outline-none cursor-pointer flex-shrink-0"
-      >
-        <motion.div
-          className="w-6 h-6 rounded-full absolute top-0.5"
-          style={{ backgroundColor: checked ? activeColor : 'var(--color-selene-brown)' }}
-          animate={{ left: checked ? '30px' : '2px' }}
-          transition={{ type: "spring", stiffness: 500, damping: 30 }}
-        />
-      </button>
-    </div>
   );
 }

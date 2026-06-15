@@ -90,8 +90,7 @@ export default function Settings({ username = 'user', setView, token, user, setU
 
   const handleSave = async () => {
     if (!token) {
-      if (showToast) showToast("Please log in to save settings.", "error");
-      else alert("Please log in to save settings.");
+      showToast("Please log in to save settings.", "error");
       return;
     }
     
@@ -113,26 +112,22 @@ export default function Settings({ username = 'user', setView, token, user, setU
       });
       const data = await response.json();
       if (response.ok) {
-        if (showToast) showToast('Settings saved successfully! ✨', 'success');
-        else alert('Settings saved successfully! ✨');
+        showToast('Settings saved successfully! ✨', 'success');
         if (setUser && data.user) {
           setUser(data.user);
         }
       } else {
-        if (showToast) showToast(data.error || 'Failed to save settings.', 'error');
-        else alert(data.error || 'Failed to save settings.');
+        showToast(data.error || 'Failed to save settings.', 'error');
       }
     } catch (e) {
       console.error(e);
-      if (showToast) showToast('Network error. Failed to save settings.', 'error');
-      else alert('Network error. Failed to save settings.');
+      showToast('Network error. Failed to save settings.', 'error');
     }
   };
 
   const handleExportData = async () => {
     if (!token) {
-      if (showToast) showToast("Please log in to export settings.", "error");
-      else alert("Please log in to export settings.");
+      showToast("Please log in to export settings.", "error");
       return;
     }
     try {
@@ -151,19 +146,17 @@ export default function Settings({ username = 'user', setView, token, user, setU
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-      if (showToast) showToast("Data exported successfully! 📥", "success");
+      showToast("Data exported successfully! 📥", "success");
     } catch (err) {
       console.error(err);
-      if (showToast) showToast("Failed to export data", "error");
-      else alert("Failed to export data");
+      showToast("Failed to export data", "error");
     }
   };
 
   const handleDeleteData = async () => {
     if (showDeleteConfirm) {
       if (!token) {
-        if (showToast) showToast("Please log in first.", "error");
-        else alert("Please log in first.");
+        showToast("Please log in first.", "error");
         return;
       }
       try {
@@ -176,18 +169,15 @@ export default function Settings({ username = 'user', setView, token, user, setU
         });
         const data = await response.json();
         if (response.ok) {
-          if (showToast) showToast('Your account and all associated data have been permanently erased.', 'success');
-          else alert('Your account and all associated data have been permanently erased.');
+          showToast('Your account and all associated data have been permanently erased.', 'success');
           setShowDeleteConfirm(false);
           onLogout();
         } else {
-          if (showToast) showToast(data.error || 'Failed to delete account.', 'error');
-          else alert(data.error || 'Failed to delete account.');
+          showToast(data.error || 'Failed to delete account.', 'error');
         }
       } catch (e) {
         console.error(e);
-        if (showToast) showToast('Network error. Failed to erase account.', 'error');
-        else alert('Network error. Failed to erase account.');
+        showToast('Network error. Failed to erase account.', 'error');
       }
     } else {
       setShowDeleteConfirm(true);

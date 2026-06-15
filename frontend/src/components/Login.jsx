@@ -133,8 +133,7 @@ export default function Login({ setView, onLoginSuccess, showToast }) {
           <button
             onClick={() => {
               navigator.clipboard.writeText(recoveryKey);
-              if (showToast) showToast("Recovery key copied to clipboard! 📋", "success");
-              else alert("Recovery key copied to clipboard!");
+              showToast("Recovery key copied to clipboard! 📋", "success");
             }}
             className="w-full bg-[#8ba68b] hover:bg-[#7a957a] text-black font-extrabold py-3 rounded-full transition-all duration-300 transform hover:scale-105 shadow-md mb-4 flex items-center justify-center gap-2"
           >
