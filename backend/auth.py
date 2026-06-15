@@ -346,6 +346,21 @@ def login():
     if not user or not verify_hash(user.pin_hash, str(pin)):
         return jsonify({"error": "Invalid username or PIN"}), 401
         
+    if user.is_deleted:
+        now = datetime.datetime.utcnow()
+        if user.deleted_at and (now - user.deleted_at).days <= 30:
+            user.is_deleted = False
+            user.deleted_at = None
+            try:
+                db.session.commit()
+                current_app.logger.info(f"Soft-deleted user account restored: {username}")
+            except Exception as e:
+                db.session.rollback()
+                current_app.logger.error(f"Failed to restore user account: {e}")
+                return jsonify({"error": "An internal error occurred while restoring your account."}), 500
+        else:
+            return jsonify({"error": "Account has been permanently deleted or does not exist."}), 401
+        
     kek_pin = data.get('kek_pin')
     if not kek_pin:
         kek_pin = derive_kek_server(str(pin), username, is_recovery=False)
@@ -622,24 +637,55 @@ def update_profile():
 @jwt_required
 def delete_account():
     """
-    Delete the current authenticated user account and all associated daily logs.
+    Flags the active user account as deleted and records the timestamp (soft-delete).
+    Revokes the active access and refresh tokens.
     """
+    user = g.user
+    user.is_deleted = True
+    user.deleted_at = datetime.datetime.utcnow()
+    user.refresh_token_hash = None
+    
+    # Revoke tokens
+    access_token = request.cookies.get('access_token')
+    refresh_token = request.cookies.get('refresh_token')
+    
+    if access_token:
+        try:
+            payload = jwt.decode(access_token, current_app.config['SECRET_KEY'], algorithms=['HS256'], options={"verify_exp": False})
+            jti = payload.get('jti')
+            exp = payload.get('exp')
+            if jti and exp:
+                exp_datetime = datetime.datetime.fromtimestamp(exp, datetime.timezone.utc).replace(tzinfo=None)
+                revoke_jti(jti, exp_datetime)
+        except Exception:
+            pass
+            
+    if refresh_token:
+        try:
+            payload = jwt.decode(refresh_token, current_app.config['SECRET_KEY'], algorithms=['HS256'], options={"verify_exp": False})
+            jti = payload.get('jti')
+            exp = payload.get('exp')
+            if jti and exp:
+                exp_datetime = datetime.datetime.fromtimestamp(exp, datetime.timezone.utc).replace(tzinfo=None)
+                revoke_jti(jti, exp_datetime)
+        except Exception:
+            pass
+
     try:
-        user = g.user
-        db.session.delete(user)
         db.session.commit()
-        
-        response = make_response(jsonify({
-            "status": "success",
-            "message": "Account and all associated data deleted successfully"
-        }), 200)
-        
-        response.delete_cookie('access_token')
-        response.delete_cookie('refresh_token')
-        return response
     except Exception as e:
         db.session.rollback()
+        current_app.logger.error(f"Failed to flag account deletion: {e}")
         return jsonify({"error": "Failed to delete account due to an internal error."}), 500
+        
+    response = make_response(jsonify({
+        "status": "success",
+        "message": "Account soft-deleted. You can restore it by logging back in within 30 days."
+    }), 200)
+    
+    response.delete_cookie('access_token')
+    response.delete_cookie('refresh_token')
+    return response
 
 
 @auth_bp.route('/verify-pin', methods=['POST'])
@@ -732,6 +778,9 @@ def reset_pin():
     except Exception:
         db.session.rollback()
         return jsonify({"error": "Failed to reset PIN due to an internal error."}), 500
+
+
+
 
 
 def verify_refresh_token(refresh_token):

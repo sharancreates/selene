@@ -6,7 +6,7 @@ This document outlines the architectural status of **Selene: Privacy-Focused Men
 
 ## 1. Architectural Accomplishments (Done Till Now)
 
-We have successfully completed all **10/10 tasks** of the **Security & Cryptography** checklist, establishing a state-of-the-art zero-knowledge, privacy-preserving infrastructure:
+We have successfully completed all **20/20 tasks** of the **Security & Cryptography** and **Backend Infrastructure** checklists, establishing a state-of-the-art secure and highly resilient zero-knowledge infrastructure:
 
 ### A. Zero-Knowledge Cryptographic Key Management (Task 1 & 4)
 * **Client-Side KEK Derivation:** The user's PIN is never transmitted to the server in plain text. The React frontend uses the Web Crypto API to run **PBKDF2 (100,000 iterations, SHA-256)**, combining the PIN and username with a custom salt to derive a 256-bit Key Encryption Key (`kek_pin`).
@@ -27,6 +27,14 @@ We have successfully completed all **10/10 tasks** of the **Security & Cryptogra
 * **Dynamic JSON Sanitization:** Added recursive HTML-escaping to sanitize all unstructured JSON fields (`mood_toggles`, `symptom_tags`, and `lifestyle_actions`) in `logs.py` to block XSS payloads.
 * **SSL Termination Conf:** Written a production-ready `nginx/selene.conf` supporting modern TLS 1.2/1.3 protocols, secure ciphers, HSTS, and proxy headers.
 
+### E. Backend Infrastructure & Resiliency (Task 11-20)
+* **PostgreSQL Engine & Connection Pooling:** Transitioned database configuration to target PostgreSQL, utilizing connection pool size limits, maximum overflow limits, and recycle timeouts via SQLAlchemy configuration parameters.
+* **Database Indexes:** Indexed the `user_id` column on the `daily_logs` table (along with `log_date`) to optimize composite queries on user trackers.
+* **Resilient Schema Migrations:** Removed `db.create_all()` in favor of database upgrades fully managed through Flask-Migrate migration scripts.
+* **Structured JSON Logs:** Integrated a JSON formatter streaming structured stdout logs in JSON format for production-grade logging.
+* **Soft Account Deletion:** Enabled account soft-deletion with a 30-day recovery window. Logins by the deleted user within 30 days automatically restore the account; otherwise, deletion becomes permanent.
+* **Custom Admin CLI & Health Checks:** Exposed `db-backup` and `db-cleanup` Flask command line tasks, and integrated Redis connectivity pings in the `/health` endpoint checks.
+
 ---
 
 ## 2. Remaining Development Checklist (What is Left)
@@ -34,16 +42,16 @@ We have successfully completed all **10/10 tasks** of the **Security & Cryptogra
 The remaining 40 tasks from the audit are organized by core areas.
 
 ### A. Backend Infrastructure (Tasks 11–20)
-- [ ] **11. Migrate Database to PostgreSQL:** Transition the backend `config.py` from SQLite to PostgreSQL.
-- [ ] **12. Remove db.create_all():** Enforce schema upgrades solely through Flask-Migrate.
-- [ ] **13. Implement Connection Pooling:** Integrate PgBouncer or configure SQLAlchemy connection pool settings.
-- [ ] **14. Index Configurations:** Configure performance indexes on `user_id` and `log_date` fields.
-- [ ] **15. Standardize API Responses:** Ensure all error and success payloads use unified structures.
-- [ ] **16. Structured JSON Logging:** Switch basic print/logger messages to structured JSON formats.
-- [ ] **17. Nightly Backup Task:** Set up automated cron scripts for daily database backups.
-- [ ] **18. Database Health Checks:** Integrate health status indicators into the `/health` endpoint.
-- [ ] **19. Soft-Delete Accounts:** Implement a 30-day recovery window before permanent account deletion.
-- [ ] **20. Revoked Token Cleanup:** Set up a Celery or cron worker to clean expired JTI entries from the database.
+- [x] **11. Migrate Database to PostgreSQL:** Transition the backend `config.py` from SQLite to PostgreSQL.
+- [x] **12. Remove db.create_all():** Enforce schema upgrades solely through Flask-Migrate.
+- [x] **13. Implement Connection Pooling:** Integrate PgBouncer or configure SQLAlchemy connection pool settings.
+- [x] **14. Index Configurations:** Configure performance indexes on `user_id` and `log_date` fields.
+- [x] **15. Standardize API Responses:** Ensure all error and success payloads use unified structures.
+- [x] **16. Structured JSON Logging:** Switch basic print/logger messages to structured JSON formats.
+- [x] **17. Nightly Backup Task:** Set up automated cron scripts for daily database backups.
+- [x] **18. Database Health Checks:** Integrate health status indicators into the `/health` endpoint.
+- [x] **19. Soft-Delete Accounts:** Implement a 30-day recovery window before permanent account deletion.
+- [x] **20. Revoked Token Cleanup:** Set up a Celery or cron worker to clean expired JTI entries from the database.
 
 ### B. Clinical & ML Pipeline (Tasks 21–30)
 - [ ] **21. Train Cycle Regressor:** Train the cycle prediction model on public FemTech datasets and export it to `selene_model.joblib`.

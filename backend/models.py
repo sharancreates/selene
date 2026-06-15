@@ -141,6 +141,10 @@ class User(db.Model):
     has_pmdd = db.Column(db.Boolean, nullable=False, default=False)
     has_endo = db.Column(db.Boolean, nullable=False, default=False)
     
+    # Soft delete flags for 30-day recovery window
+    is_deleted = db.Column(db.Boolean, nullable=False, default=False)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+    
     # Relationships
     logs = db.relationship('DailyLog', backref='user', lazy=True, cascade='all, delete-orphan')
 
@@ -168,7 +172,7 @@ class DailyLog(db.Model):
     __tablename__ = 'daily_logs'
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     log_date = db.Column(db.Date, nullable=False, index=True)
     
     # Cycle phase string (menstrual, follicular, ovulatory, luteal) (Encrypted)

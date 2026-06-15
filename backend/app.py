@@ -19,12 +19,41 @@ except ImportError:
     from predict import predict_bp
 
 
+import json
+import logging
+
+class JSONFormatter(logging.Formatter):
+    """Custom formatter to output logs as structured JSON."""
+    def format(self, record):
+        log_record = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "name": record.name,
+            "message": record.getMessage()
+        }
+        if record.exc_info:
+            log_record["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
+
+
 def create_app(config_class=Config):
     """
     Application factory to configure Flask, bind db, setup CORS, and register blueprints.
     """
     app = Flask(__name__)
     app.config.from_object(config_class)
+    
+    # Configure JSON logging in non-testing environments
+    if not app.config.get('TESTING'):
+        from logging import StreamHandler
+        handler = StreamHandler()
+        handler.setFormatter(JSONFormatter())
+        
+        root_logger = logging.getLogger()
+        for h in root_logger.handlers[:]:
+            root_logger.removeHandler(h)
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.INFO)
     
     # Validate SECRET_KEY is set unless in testing mode
     if not app.config.get('TESTING'):
@@ -101,18 +130,33 @@ def create_app(config_class=Config):
     # Service health checking route
     @app.route('/health', methods=['GET'])
     def health_check():
+        # Check DB status
         try:
             from sqlalchemy import text
             db.session.execute(text("SELECT 1"))
             db_status = "connected"
         except Exception:
             db_status = "disconnected"
+
+        # Check Redis status
+        redis_status = "disabled"
+        if app.config.get('REDIS_URL'):
+            try:
+                import redis
+                r = redis.Redis.from_url(app.config['REDIS_URL'])
+                r.ping()
+                redis_status = "connected"
+            except Exception:
+                redis_status = "disconnected"
             
+        is_healthy = db_status == "connected" and redis_status != "disconnected"
+        
         return jsonify({
-            "status": "healthy" if db_status == "connected" else "unhealthy",
+            "status": "healthy" if is_healthy else "unhealthy",
             "database": db_status,
+            "redis": redis_status,
             "app_name": "selene-api"
-        }), 200 if db_status == "connected" else 500
+        }), 200 if is_healthy else 500
 
     # Register global exception handler to avoid leaking error details
     @app.errorhandler(Exception)
@@ -122,8 +166,64 @@ def create_app(config_class=Config):
             return jsonify({"error": e.description}), e.code
         app.logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
         return jsonify({"error": "An unexpected internal database or system error occurred."}), 500
-        
+
+    # Register CLI commands
+    register_commands(app)
+
     return app
+
+
+def register_commands(app):
+    @app.cli.command("db-cleanup")
+    def db_cleanup():
+        """Clean up expired JTI entries from the database."""
+        from models import db, RevokedToken
+        from datetime import datetime
+        now = datetime.utcnow()
+        deleted = RevokedToken.query.filter(RevokedToken.expires_at < now).delete()
+        db.session.commit()
+        app.logger.info(f"Cleaned up {deleted} expired revoked tokens from the database.")
+        print(f"Cleaned up {deleted} expired revoked tokens.")
+
+    @app.cli.command("db-backup")
+    def db_backup():
+        """Automated backup task for the database (PostgreSQL/SQLite)."""
+        import os
+        import subprocess
+        import shutil
+        from datetime import datetime
+        
+        db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+        backup_dir = os.path.join(app.root_path, 'backups')
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+            
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        if db_uri.startswith('sqlite:///'):
+            db_path = db_uri.replace('sqlite:///', '')
+            if not os.path.isabs(db_path):
+                db_path = os.path.join(app.root_path, db_path)
+            backup_path = os.path.join(backup_dir, f"backup_{timestamp}.db")
+            if os.path.exists(db_path):
+                shutil.copy2(db_path, backup_path)
+                app.logger.info(f"SQLite backup created at {backup_path}")
+                print(f"SQLite backup created at {backup_path}")
+            else:
+                app.logger.error(f"SQLite database file not found at {db_path}")
+                print(f"SQLite database file not found at {db_path}")
+        elif db_uri.startswith('postgresql://'):
+            backup_path = os.path.join(backup_dir, f"backup_{timestamp}.sql")
+            try:
+                subprocess.run(['pg_dump', f'--dbname={db_uri}', '-f', backup_path], check=True)
+                app.logger.info(f"PostgreSQL backup created at {backup_path}")
+                print(f"PostgreSQL backup created at {backup_path}")
+            except Exception as e:
+                app.logger.error(f"PostgreSQL backup failed: {str(e)}")
+                print(f"PostgreSQL backup failed: {str(e)}")
+        else:
+            app.logger.error(f"Unsupported database URI for backup: {db_uri}")
+            print(f"Unsupported database URI for backup: {db_uri}")
 
 
 app = create_app()

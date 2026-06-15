@@ -13,7 +13,15 @@ class Config:
     
     # Database URI - target PostgreSQL, fallback to local SQLite
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
-        'sqlite:///' + os.path.join(basedir, 'selene.db')
+        'postgresql://postgres:postgres@localhost:5432/selene'
+    
+    # Connection pooling configuration for PostgreSQL in production
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_size": int(os.environ.get("DATABASE_POOL_SIZE", 10)),
+        "max_overflow": int(os.environ.get("DATABASE_MAX_OVERFLOW", 20)),
+        "pool_timeout": 30,
+        "pool_recycle": 1800,
+    }
     
     # Silence Flask-SQLAlchemy tracking overhead
     SQLALCHEMY_TRACK_MODIFICATIONS = False

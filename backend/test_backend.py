@@ -790,6 +790,87 @@ class SeleneBackendTestCase(unittest.TestCase):
         self.assertEqual(serialized_legacy['pelvic_pain'], 30)
         self.assertEqual(serialized_legacy['back_pain'], 20)
 
+    def test_soft_delete_and_recovery_flow(self):
+        """
+        Verifies that a user can soft-delete their account, restore it by logging in
+        within 30 days, and is blocked from logging in after 30 days.
+        """
+        from datetime import datetime, timedelta
+        
+        # 1. Register and login to get access token
+        register_payload = {"username": "deleteuser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        
+        # Extract access token cookie
+        set_cookies = res.headers.getlist('Set-Cookie')
+        cookies = {c.split('=')[0].strip(): c.split('=')[1].split(';')[0].strip() for c in set_cookies if '=' in c}
+        access_token = cookies.get('access_token')
+        self.assertIsNotNone(access_token)
+        
+        # Setup headers and cookies
+        headers = {'Authorization': f"Bearer {access_token}"}
+        self.client.set_cookie('access_token', access_token)
+        if 'refresh_token' in cookies:
+            self.client.set_cookie('refresh_token', cookies['refresh_token'])
+            
+        # 2. Call delete-account endpoint
+        res_delete = self.client.delete('/api/auth/account', headers=headers)
+        self.assertEqual(res_delete.status_code, 200)
+        self.assertIn("Account soft-deleted", res_delete.get_json()['message'])
+        
+        # Verify db status
+        user = User.query.filter_by(username="deleteuser").first()
+        self.assertIsNotNone(user)
+        self.assertTrue(user.is_deleted)
+        self.assertIsNotNone(user.deleted_at)
+        
+        # 3. Log back in within 30 days (deleted_at is current time)
+        login_payload = {
+            "username": "deleteuser",
+            "pin": "123456"
+        }
+        res_login = self.client.post('/api/auth/login', json=login_payload)
+        self.assertEqual(res_login.status_code, 200)
+        self.assertEqual(res_login.get_json()['status'], 'success')
+        
+        # Verify db status is restored
+        db.session.refresh(user)
+        self.assertFalse(user.is_deleted)
+        self.assertIsNone(user.deleted_at)
+        
+        # 4. Soft-delete again
+        set_cookies_login = res_login.headers.getlist('Set-Cookie')
+        cookies_login = {c.split('=')[0].strip(): c.split('=')[1].split(';')[0].strip() for c in set_cookies_login if '=' in c}
+        access_token_login = cookies_login.get('access_token')
+        self.client.set_cookie('access_token', access_token_login)
+        if 'refresh_token' in cookies_login:
+            self.client.set_cookie('refresh_token', cookies_login['refresh_token'])
+            
+        res_delete2 = self.client.delete('/api/auth/account', headers={'Authorization': f"Bearer {access_token_login}"})
+        self.assertEqual(res_delete2.status_code, 200)
+        
+        # Manually alter user.deleted_at to be 31 days ago
+        user = User.query.filter_by(username="deleteuser").first()
+        user.deleted_at = datetime.utcnow() - timedelta(days=31)
+        db.session.commit()
+        
+        # 5. Log in after 30 days - should fail
+        res_login_expired = self.client.post('/api/auth/login', json=login_payload)
+        self.assertEqual(res_login_expired.status_code, 401)
+        self.assertIn("Account has been permanently deleted or does not exist.", res_login_expired.get_json().get('error', ''))
+
+    def test_health_check_endpoint(self):
+        """
+        Verifies health check endpoint returns proper connection indicators.
+        """
+        res = self.client.get('/health')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data['status'], 'healthy')
+        self.assertEqual(data['database'], 'connected')
+        self.assertIn('redis', data)
+
 
 if __name__ == '__main__':
     unittest.main()
