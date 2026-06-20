@@ -95,6 +95,7 @@ function App() {
     setUser(null);
     setIsUnlocked(true);
     localStorage.removeItem('selene_logged_in');
+    sessionStorage.removeItem('selene_session_key');
     window.history.replaceState({}, '', '/');
     setViewInternal('landing');
   };
@@ -455,6 +456,7 @@ function CalculatorGuard({ token, username, onUnlock }) {
           });
           const data = await response.json();
           if (response.ok && data.unlocked) {
+            sessionStorage.setItem('selene_session_key', kek_pin);
             onUnlock();
             return;
           } else {

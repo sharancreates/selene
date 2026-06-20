@@ -69,6 +69,7 @@ const getCookie = (name) => {
       if (response.ok) {
         // ADD this line to persist the camouflage mode setting
         localStorage.setItem('selene_camouflage_mode', camouflageMode ? 'true' : 'false');
+        sessionStorage.setItem('selene_session_key', kek_pin);
         
         setRegUserData(data.user);
         setRegToken(data.token || '');

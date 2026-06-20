@@ -59,6 +59,7 @@ export default function Login({ setView, onLoginSuccess, showToast }) {
       
       const data = await response.json();
       if (response.ok) {
+        sessionStorage.setItem('selene_session_key', kek_pin);
         if (data.recovery_key) {
           setRecoveryKey(data.recovery_key);
           setRegUserData(data.user);

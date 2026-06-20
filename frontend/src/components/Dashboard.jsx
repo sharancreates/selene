@@ -10,6 +10,7 @@ import HealthConditionsPanel from './HealthConditionsPanel';
 import TeaIllustration from './TeaIllustration';
 import ReadingIllustration from './ReadingIllustration';
 import SleepingIllustration from './SleepingIllustration';
+import { encryptData, decryptData } from '../utils/crypto';
 
 // Phase configuration details
 const phases = [
@@ -352,8 +353,52 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
     }
   };
 
+  const getOfflineLogs = async () => {
+    const raw = localStorage.getItem('selene_offline_logs');
+    if (!raw) return [];
+    
+    const key = sessionStorage.getItem('selene_session_key');
+    if (!key) {
+      if (raw.trim().startsWith('[')) {
+        try {
+          return JSON.parse(raw);
+        } catch (e) {
+          return [];
+        }
+      }
+      return [];
+    }
+
+    try {
+      if (raw.trim().startsWith('[')) {
+        return JSON.parse(raw);
+      }
+      const decrypted = await decryptData(raw, key);
+      return JSON.parse(decrypted || '[]');
+    } catch (err) {
+      console.error("Failed to decrypt offline logs:", err);
+      return [];
+    }
+  };
+
+  const saveOfflineLogs = async (logs) => {
+    const key = sessionStorage.getItem('selene_session_key');
+    const jsonStr = JSON.stringify(logs);
+    if (!key) {
+      localStorage.setItem('selene_offline_logs', jsonStr);
+      return;
+    }
+    try {
+      const encrypted = await encryptData(jsonStr, key);
+      localStorage.setItem('selene_offline_logs', encrypted);
+    } catch (err) {
+      console.error("Failed to encrypt offline logs:", err);
+      localStorage.setItem('selene_offline_logs', jsonStr);
+    }
+  };
+
   const syncOfflineQueue = async () => {
-    const queuedLogs = JSON.parse(localStorage.getItem('selene_offline_logs') || '[]');
+    const queuedLogs = await getOfflineLogs();
     if (queuedLogs.length === 0) return;
 
     setIsSyncing(true);
@@ -387,7 +432,7 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
       fetchLogsData();
     }
 
-    localStorage.setItem('selene_offline_logs', JSON.stringify(remainingLogs));
+    await saveOfflineLogs(remainingLogs);
     setIsSyncing(false);
   };
 
@@ -501,10 +546,10 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
 
     if (!isOnline) {
       // Offline support
-      const queuedLogs = JSON.parse(localStorage.getItem('selene_offline_logs') || '[]');
+      const queuedLogs = await getOfflineLogs();
       const filtered = queuedLogs.filter(l => l.log_date !== payload.log_date);
       filtered.push(payload);
-      localStorage.setItem('selene_offline_logs', JSON.stringify(filtered));
+      await saveOfflineLogs(filtered);
 
       setAllLogs(prev => {
         const copy = prev.filter(l => l.log_date !== payload.log_date);
