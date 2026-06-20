@@ -13,7 +13,7 @@ class Config:
     
     # Database URI - target PostgreSQL, fallback to local SQLite
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
-        'postgresql://postgres:postgres@localhost:5432/selene'
+        'postgresql://postgres:admin@localhost:5432/selene'
     
     # Connection pooling configuration for PostgreSQL in production
     SQLALCHEMY_ENGINE_OPTIONS = {

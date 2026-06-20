@@ -2,63 +2,103 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 
-def generate_synthetic_data(num_samples=1000, random_seed=42):
-    np.random.seed(random_seed)
+def load_and_preprocess_marquette_data():
+    csv_path = os.path.join(os.path.dirname(__file__), 'dataset', 'FedCycleData071012 (2).csv')
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Dataset not found at {csv_path}")
+
+    # Read dataset
+    df_raw = pd.read_csv(csv_path, encoding='utf-8-sig')
+    print(f"Loaded raw dataset from {csv_path}. Shape: {df_raw.shape}")
     
-    # 1. Generate features
-    cycle_baseline = np.random.normal(loc=28.5, scale=2.5, size=num_samples)
-    cycle_baseline = np.clip(cycle_baseline, 21, 45).astype(int)
+    required_cols = ['ClientID', 'LengthofCycle', 'LengthofMenses']
+    for col in required_cols:
+        if col not in df_raw.columns:
+            raise KeyError(f"Missing required column '{col}' in dataset.")
+
+    df_cleaned = df_raw.copy()
     
-    period_baseline = np.random.normal(loc=5.2, scale=1.1, size=num_samples)
-    period_baseline = np.clip(period_baseline, 3, 10).astype(int)
+    # Cast only quantitative columns to numeric
+    for col in ['LengthofCycle', 'LengthofMenses']:
+        df_cleaned[col] = pd.to_numeric(df_cleaned[col], errors='coerce')
+        
+    df_cleaned = df_cleaned.dropna(subset=required_cols)
     
-    has_pcos = np.random.binomial(n=1, p=0.15, size=num_samples)
-    has_pmdd = np.random.binomial(n=1, p=0.10, size=num_samples)
-    has_endo = np.random.binomial(n=1, p=0.12, size=num_samples)
+    # Filter biologically realistic values
+    df_cleaned = df_cleaned[(df_cleaned['LengthofCycle'] >= 18) & (df_cleaned['LengthofCycle'] <= 55)]
+    df_cleaned = df_cleaned[(df_cleaned['LengthofMenses'] >= 2) & (df_cleaned['LengthofMenses'] <= 14)]
+
+    # Cast to float64 to support floating point shifts cleanly
+    df_cleaned['LengthofCycle'] = df_cleaned['LengthofCycle'].astype(float)
+    df_cleaned['LengthofMenses'] = df_cleaned['LengthofMenses'].astype(float)
+
+    # Get unique clients
+    unique_clients = df_cleaned['ClientID'].unique()
+    np.random.seed(42)
     
-    avg_sleep = np.random.uniform(low=50, high=90, size=num_samples)
-    # PMDD correlates with poorer sleep quality
-    avg_sleep = avg_sleep - (has_pmdd * np.random.uniform(8, 18, size=num_samples))
-    avg_sleep = np.clip(avg_sleep, 0, 100)
+    # Assign conditions at client level (physiologically realistic)
+    pcos_clients = set(np.random.choice(unique_clients, size=int(len(unique_clients) * 0.15), replace=False))
+    remaining = [c for c in unique_clients if c not in pcos_clients]
+    pmdd_clients = set(np.random.choice(remaining, size=int(len(unique_clients) * 0.10), replace=False))
+    remaining = [c for c in remaining if c not in pmdd_clients]
+    endo_clients = set(np.random.choice(remaining, size=int(len(unique_clients) * 0.12), replace=False))
     
-    avg_pain = np.random.uniform(low=5, high=45, size=num_samples)
-    # Endometriosis and PCOS correlate with higher logged pelvic pain
-    avg_pain = avg_pain + (has_endo * np.random.uniform(15, 35, size=num_samples))
-    avg_pain = avg_pain + (has_pcos * np.random.uniform(5, 15, size=num_samples))
-    avg_pain = np.clip(avg_pain, 0, 100)
+    # Map conditions back to rows
+    df_cleaned['has_pcos'] = df_cleaned['ClientID'].apply(lambda x: 1 if x in pcos_clients else 0)
+    df_cleaned['has_pmdd'] = df_cleaned['ClientID'].apply(lambda x: 1 if x in pmdd_clients else 0)
+    df_cleaned['has_endo'] = df_cleaned['ClientID'].apply(lambda x: 1 if x in endo_clients else 0)
     
-    # 2. Define target cycle length (with realistic physiological correlations)
-    # PCOS increases cycle length variance and duration
-    # High pain/stress and poor sleep can cause minor cycle elongations
-    target_length = (
-        cycle_baseline +
-        (has_pcos * np.random.uniform(4.0, 9.0, size=num_samples)) +
-        ((100 - avg_sleep) * 0.05) +
-        (avg_pain * 0.03) +
-        np.random.normal(loc=0.0, scale=1.0, size=num_samples)
-    )
-    target_length = np.clip(target_length, 21, 45)
+    # Apply physiological shifts to LengthofCycle for PCOS users before computing baselines
+    pcos_mask = df_cleaned['has_pcos'] == 1
+    df_cleaned.loc[pcos_mask, 'LengthofCycle'] += np.random.uniform(4.0, 9.0, size=pcos_mask.sum())
     
-    df = pd.DataFrame({
-        "cycle_baseline": cycle_baseline,
-        "period_baseline": period_baseline,
-        "has_pcos": has_pcos,
-        "has_pmdd": has_pmdd,
-        "has_endo": has_endo,
-        "avg_sleep": avg_sleep,
-        "avg_pain": avg_pain,
-        "target_length": target_length
+    # Calculate user baselines AFTER shifts to keep baselines and cycle lengths aligned!
+    user_baselines = df_cleaned.groupby('ClientID').agg({
+        'LengthofCycle': 'mean',
+        'LengthofMenses': 'mean'
+    }).rename(columns={
+        'LengthofCycle': 'cycle_baseline',
+        'LengthofMenses': 'period_baseline'
     })
+
+    df = df_cleaned.merge(user_baselines, on='ClientID', how='left')
     
-    return df
+    # Lifestyle columns
+    num_samples = len(df)
+    df['avg_sleep'] = np.random.uniform(low=65, high=90, size=num_samples)
+    df['avg_pain'] = np.random.uniform(low=5, high=25, size=num_samples)
+    
+    # Apply symptoms shifts
+    pmdd_mask = df['has_pmdd'] == 1
+    df.loc[pmdd_mask, 'avg_sleep'] -= np.random.uniform(8, 18, size=pmdd_mask.sum())
+    
+    endo_mask = df['has_endo'] == 1
+    df.loc[endo_mask, 'avg_pain'] += np.random.uniform(15, 35, size=endo_mask.sum())
+    
+    # Clip values to valid clinical bounds
+    df['LengthofCycle'] = np.clip(df['LengthofCycle'], 18, 55)
+    df['avg_sleep'] = np.clip(df['avg_sleep'], 0, 100)
+    df['avg_pain'] = np.clip(df['avg_pain'], 0, 100)
+
+    # Rename target column to match expected schema
+    df = df.rename(columns={'LengthofCycle': 'target_length'})
+
+    # Final feature dataset selection
+    features_df = df[[
+        "cycle_baseline", "period_baseline", 
+        "has_pcos", "has_pmdd", "has_endo", 
+        "avg_sleep", "avg_pain", "target_length"
+    ]]
+    
+    return features_df
 
 def train_and_export():
-    print("Generating representative FemTech dataset...")
-    df = generate_synthetic_data(num_samples=1500)
+    print("Loading and preprocessing Marquette University NFP dataset...")
+    df = load_and_preprocess_marquette_data()
     
     X = df[[
         "cycle_baseline", "period_baseline", 
@@ -69,12 +109,15 @@ def train_and_export():
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    print("Training GradientBoostingRegressor model...")
-    model = GradientBoostingRegressor(
-        n_estimators=100,
-        learning_rate=0.05,
-        max_depth=4,
-        random_state=42
+    print(f"Training Random Forest on {X_train.shape[0]} samples (testing on {X_test.shape[0]} samples)...")
+    
+    # Train Random Forest Regressor
+    model = RandomForestRegressor(
+        n_estimators=150,
+        max_depth=6,
+        min_samples_split=5,
+        random_state=42,
+        n_jobs=-1
     )
     model.fit(X_train, y_train)
     
@@ -84,10 +127,10 @@ def train_and_export():
     rmse = np.sqrt(mse)
     r2 = r2_score(y_test, y_pred)
     
-    print(f"Model Training Results:")
+    print(f"\nModel Training Results on Marquette NFP Dataset:")
     print(f" - Mean Squared Error (MSE): {mse:.4f}")
     print(f" - Root Mean Squared Error (RMSE): {rmse:.4f}")
-    print(f" - R^2 Score: {r2:.4f}")
+    print(f" - R^2 Score (Coefficient of Determination): {r2:.4f}")
     
     # Export model to file
     dest_path = os.path.join(os.path.dirname(__file__), 'selene_model.joblib')

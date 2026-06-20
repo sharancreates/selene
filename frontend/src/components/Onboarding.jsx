@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
+import CustomSlider from './CustomSlider';
 
 const getCookie = (name) => {
   const value = `; ${document.cookie}`;
@@ -190,37 +191,31 @@ export default function Onboarding({ token, user, setUser, setView, showToast })
 
               {/* Average Period Length */}
               <div className="flex flex-col gap-1">
-                <div className="flex justify-between items-center pr-1">
-                  <label className="font-handwriting text-black text-2xl sm:text-3xl pl-1">
-                    Avg Period Length:
-                  </label>
-                  <span className="font-sans font-bold text-black text-xl">{avgPeriodLength} days</span>
-                </div>
-                <input
-                  type="range"
-                  min="2"
-                  max="10"
+                <CustomSlider
+                  label="Avg Period Length"
+                  leftLabel="2 days"
+                  rightLabel="10 days"
                   value={avgPeriodLength}
-                  onChange={(e) => setAvgPeriodLength(parseInt(e.target.value))}
-                  className="w-full h-2 bg-[#d2d2d2] rounded-lg appearance-none cursor-pointer accent-[var(--color-selene-brown)]"
+                  onChange={setAvgPeriodLength}
+                  min={2}
+                  max={10}
+                  showValueBadge={true}
+                  valueSuffix=" days"
                 />
               </div>
 
               {/* Average Cycle Length */}
               <div className="flex flex-col gap-1">
-                <div className="flex justify-between items-center pr-1">
-                  <label className="font-handwriting text-black text-2xl sm:text-3xl pl-1">
-                    Avg Cycle Length:
-                  </label>
-                  <span className="font-sans font-bold text-black text-xl">{avgCycleLength} days</span>
-                </div>
-                <input
-                  type="range"
-                  min="18"
-                  max="45"
+                <CustomSlider
+                  label="Avg Cycle Length"
+                  leftLabel="18 days"
+                  rightLabel="45 days"
                   value={avgCycleLength}
-                  onChange={(e) => setAvgCycleLength(parseInt(e.target.value))}
-                  className="w-full h-2 bg-[#d2d2d2] rounded-lg appearance-none cursor-pointer accent-[var(--color-selene-brown)]"
+                  onChange={setAvgCycleLength}
+                  min={18}
+                  max={45}
+                  showValueBadge={true}
+                  valueSuffix=" days"
                 />
               </div>
 
