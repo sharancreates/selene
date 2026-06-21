@@ -194,20 +194,20 @@ def jwt_required(f):
             if not user_id:
                 return jsonify({"error": "Invalid token"}), 401
             
-            # Retrieve the user model safely from db session
-            user = db.session.get(User, user_id)
-            if not user:
-                return jsonify({"error": "User associated with this token was not found"}), 401
-            
-            # Attach the user and user encryption key to Flask's thread-local global context
-            g.user = user
-            
             encrypted_dek = payload.get('dek')
             if encrypted_dek:
                 server_cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(current_app.config['SECRET_KEY'].encode()).digest()))
                 g.user_encryption_key = server_cipher.decrypt(encrypted_dek.encode()).decode()
             else:
                 g.user_encryption_key = None
+
+            # Retrieve the user model safely from db session
+            user = db.session.get(User, user_id)
+            if not user:
+                return jsonify({"error": "User associated with this token was not found"}), 401
+            
+            # Attach the user to Flask's thread-local global context
+            g.user = user
             
         except jwt.ExpiredSignatureError:
             return jsonify({"error": "Token has expired"}), 401
@@ -626,6 +626,10 @@ def update_profile():
         user.has_endo = bool(data['has_endo'])
     if 'has_onboarded' in data:
         user.has_onboarded = bool(data['has_onboarded'])
+    if 'disclaimer_accepted' in data:
+        user.disclaimer_accepted = bool(data['disclaimer_accepted'])
+    if 'disclaimer_signed_name' in data:
+        user.disclaimer_signed_name = data['disclaimer_signed_name']
         
     try:
         db.session.commit()

@@ -10,6 +10,10 @@ const getCookie = (name) => {
 };
 
 export default function Onboarding({ token, user, setUser, setView, showToast }) {
+  const [step, setStep] = useState(1);
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  const [disclaimerSignedName, setDisclaimerSignedName] = useState('');
+
   const [lastPeriodDate, setLastPeriodDate] = useState('');
   const [avgPeriodLength, setAvgPeriodLength] = useState(5);
   const [avgCycleLength, setAvgCycleLength] = useState(28);
@@ -21,6 +25,22 @@ export default function Onboarding({ token, user, setUser, setView, showToast })
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const handleNextStep = (e) => {
+    e.preventDefault();
+    if (!disclaimerAccepted) {
+      setError('You must accept the Medical Disclaimer to proceed.');
+      if (showToast) showToast('Disclaimer acceptance is required.', 'error');
+      return;
+    }
+    if (!disclaimerSignedName.trim() || disclaimerSignedName.trim().length < 2) {
+      setError('Please sign the disclaimer with your full name.');
+      if (showToast) showToast('A valid signature is required.', 'error');
+      return;
+    }
+    setError('');
+    setStep(2);
+  };
 
   const handleOnboardingSubmit = async (e) => {
     e.preventDefault();
@@ -34,7 +54,7 @@ export default function Onboarding({ token, user, setUser, setView, showToast })
     setError('');
 
     try {
-      // 1. Update Profile (baselines + conditions + has_onboarded)
+      // 1. Update Profile (baselines + conditions + has_onboarded + disclaimer)
       const profileRes = await fetch('/api/auth/profile', {
         method: 'PUT',
         headers: {
@@ -48,7 +68,9 @@ export default function Onboarding({ token, user, setUser, setView, showToast })
           has_pcos: hasPCOS,
           has_pmdd: hasPMDD,
           has_endo: hasEndo,
-          has_onboarded: true
+          has_onboarded: true,
+          disclaimer_accepted: disclaimerAccepted,
+          disclaimer_signed_name: disclaimerSignedName
         })
       });
 
@@ -164,109 +186,177 @@ export default function Onboarding({ token, user, setUser, setView, showToast })
             className="relative z-20 w-[310px] sm:w-[380px] bg-[#df9b6d] rounded-[2.5rem] p-8 sm:p-10 shadow-2xl border border-white/10 flex flex-col justify-between"
           >
             {error && (
-              <div className="absolute -top-12 left-0 right-0 bg-red-500 text-white font-handwriting text-lg px-4 py-2 rounded-xl text-center">
+              <div className="absolute -top-12 left-0 right-0 bg-red-500 text-white font-handwriting text-lg px-4 py-2 rounded-xl text-center z-30">
                 {error}
               </div>
             )}
 
-            <form onSubmit={handleOnboardingSubmit} className="flex flex-col gap-5">
-              
-              <h3 className="font-handwriting text-black text-center text-4xl sm:text-5xl tracking-wide mb-1 uppercase font-bold">
-                ONBOARDING
-              </h3>
+            {step === 1 ? (
+              <form onSubmit={handleNextStep} className="flex flex-col gap-4">
+                
+                <h3 className="font-handwriting text-black text-center text-4xl sm:text-5xl tracking-wide mb-1 uppercase font-bold">
+                  DISCLAIMER
+                </h3>
 
-              {/* Last Period Start Date */}
-              <div className="flex flex-col gap-1">
-                <label className="font-handwriting text-black text-2xl sm:text-3xl pl-1">
-                  Last Period Start Date:
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={lastPeriodDate}
-                  onChange={(e) => setLastPeriodDate(e.target.value)}
-                  className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-sans text-lg px-4 py-2 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
-                />
-              </div>
+                <div className="bg-[#f2b994] text-black/90 p-4 rounded-2xl max-h-[180px] overflow-y-auto text-sm leading-relaxed border border-black/10 font-sans shadow-inner scrollbar-thin">
+                  <p className="font-bold mb-2">Important Medical Disclaimer</p>
+                  <p className="mb-2">
+                    Selene is a tracking and prediction tool intended for educational, wellness, and self-monitoring purposes.
+                  </p>
+                  <p className="mb-2">
+                    <strong>Selene is NOT a medical device</strong> and should never be used as a substitute for professional medical advice, diagnosis, treatment, or contraception.
+                  </p>
+                  <p>
+                    Always consult with a qualified physician or healthcare provider for any questions regarding menstrual health, pregnancy, or chronic conditions.
+                  </p>
+                </div>
 
-              {/* Average Period Length */}
-              <div className="flex flex-col gap-1">
-                <CustomSlider
-                  label="Avg Period Length"
-                  leftLabel="2 days"
-                  rightLabel="10 days"
-                  value={avgPeriodLength}
-                  onChange={setAvgPeriodLength}
-                  min={2}
-                  max={10}
-                  showValueBadge={true}
-                  valueSuffix=" days"
-                />
-              </div>
-
-              {/* Average Cycle Length */}
-              <div className="flex flex-col gap-1">
-                <CustomSlider
-                  label="Avg Cycle Length"
-                  leftLabel="18 days"
-                  rightLabel="45 days"
-                  value={avgCycleLength}
-                  onChange={setAvgCycleLength}
-                  min={18}
-                  max={45}
-                  showValueBadge={true}
-                  valueSuffix=" days"
-                />
-              </div>
-
-              {/* Chronic Conditions */}
-              <div className="flex flex-col gap-2 mt-1 px-1">
-                <label className="font-handwriting text-black text-2xl sm:text-3xl">
-                  Chronic Conditions (Optional):
-                </label>
-                <div className="flex flex-col gap-2 font-sans text-sm">
-                  <label className="flex items-center gap-2 cursor-pointer text-black font-semibold select-none">
+                <div className="flex flex-col gap-2 mt-1">
+                  <label className="flex items-start gap-2 cursor-pointer text-black font-semibold select-none text-sm leading-tight">
                     <input 
                       type="checkbox"
-                      checked={hasPCOS}
-                      onChange={(e) => setHasPCOS(e.target.checked)}
-                      className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent"
+                      checked={disclaimerAccepted}
+                      onChange={(e) => setDisclaimerAccepted(e.target.checked)}
+                      className="w-4 h-4 rounded mt-0.5 border-black/20 text-[#8ba68b] focus:ring-transparent"
                     />
-                    <span>PCOS Support</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer text-black font-semibold select-none">
-                    <input 
-                      type="checkbox"
-                      checked={hasPMDD}
-                      onChange={(e) => setHasPMDD(e.target.checked)}
-                      className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent"
-                    />
-                    <span>PMDD Companion</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer text-black font-semibold select-none">
-                    <input 
-                      type="checkbox"
-                      checked={hasEndo}
-                      onChange={(e) => setHasEndo(e.target.checked)}
-                      className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent"
-                    />
-                    <span>Endometriosis Monitor</span>
+                    <span>I accept that Selene is not a medical advisor.</span>
                   </label>
                 </div>
-              </div>
 
-              {/* GO / Submit Button */}
-              <motion.button
-                type="submit"
-                disabled={loading}
-                whileHover={{ scale: 1.08 }}
-                whileTap={{ scale: 0.95 }}
-                className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-16 h-16 rounded-full bg-[#d2d2d2] hover:bg-white text-black font-handwriting text-2xl font-bold flex items-center justify-center shadow-xl border border-[#df9b6d] focus:outline-none transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? '...' : 'GO'}
-              </motion.button>
+                <div className="flex flex-col gap-1">
+                  <label className="font-handwriting text-black text-2xl pl-1">
+                    Signature (Full Name):
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={disclaimerSignedName}
+                    onChange={(e) => setDisclaimerSignedName(e.target.value)}
+                    placeholder="Type name to sign..."
+                    className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-sans text-base px-4 py-2 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
+                  />
+                </div>
 
-            </form>
+                {/* Next Button */}
+                <motion.button
+                  type="submit"
+                  whileHover={{ scale: 1.08 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-16 h-16 rounded-full bg-[#d2d2d2] hover:bg-white text-black font-handwriting text-2xl font-bold flex items-center justify-center shadow-xl border border-[#df9b6d] focus:outline-none transition-colors duration-200 cursor-pointer"
+                >
+                  NEXT
+                </motion.button>
+
+              </form>
+            ) : (
+              <form onSubmit={handleOnboardingSubmit} className="flex flex-col gap-5">
+                
+                <h3 className="font-handwriting text-black text-center text-4xl sm:text-5xl tracking-wide mb-1 uppercase font-bold">
+                  ONBOARDING
+                </h3>
+
+                {/* Last Period Start Date */}
+                <div className="flex flex-col gap-1">
+                  <label className="font-handwriting text-black text-2xl sm:text-3xl pl-1">
+                    Last Period Start Date:
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={lastPeriodDate}
+                    onChange={(e) => setLastPeriodDate(e.target.value)}
+                    className="w-full bg-[#d2d2d2] hover:bg-[#c8c8c8] focus:bg-white text-black font-sans text-lg px-4 py-2 rounded-2xl focus:outline-none transition-colors duration-200 shadow-inner"
+                  />
+                </div>
+
+                {/* Average Period Length */}
+                <div className="flex flex-col gap-1">
+                  <CustomSlider
+                    label="Avg Period Length"
+                    leftLabel="2 days"
+                    rightLabel="10 days"
+                    value={avgPeriodLength}
+                    onChange={setAvgPeriodLength}
+                    min={2}
+                    max={10}
+                    showValueBadge={true}
+                    valueSuffix=" days"
+                  />
+                </div>
+
+                {/* Average Cycle Length */}
+                <div className="flex flex-col gap-1">
+                  <CustomSlider
+                    label="Avg Cycle Length"
+                    leftLabel="18 days"
+                    rightLabel="45 days"
+                    value={avgCycleLength}
+                    onChange={setAvgCycleLength}
+                    min={18}
+                    max={45}
+                    showValueBadge={true}
+                    valueSuffix=" days"
+                  />
+                </div>
+
+                {/* Chronic Conditions */}
+                <div className="flex flex-col gap-2 mt-1 px-1">
+                  <label className="font-handwriting text-black text-2xl sm:text-3xl">
+                    Chronic Conditions (Optional):
+                  </label>
+                  <div className="flex flex-col gap-2 font-sans text-sm">
+                    <label className="flex items-center gap-2 cursor-pointer text-black font-semibold select-none">
+                      <input 
+                        type="checkbox"
+                        checked={hasPCOS}
+                        onChange={(e) => setHasPCOS(e.target.checked)}
+                        className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent"
+                      />
+                      <span>PCOS Support</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-black font-semibold select-none">
+                      <input 
+                        type="checkbox"
+                        checked={hasPMDD}
+                        onChange={(e) => setHasPMDD(e.target.checked)}
+                        className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent"
+                      />
+                      <span>PMDD Companion</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-black font-semibold select-none">
+                      <input 
+                        type="checkbox"
+                        checked={hasEndo}
+                        onChange={(e) => setHasEndo(e.target.checked)}
+                        className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent"
+                      />
+                      <span>Endometriosis Monitor</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="text-black/60 hover:text-black font-sans text-xs underline mt-2 text-center focus:outline-none cursor-pointer"
+                >
+                  &larr; Back to Medical Disclaimer
+                </button>
+
+                {/* GO / Submit Button */}
+                <motion.button
+                  type="submit"
+                  disabled={loading}
+                  whileHover={{ scale: 1.08 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-16 h-16 rounded-full bg-[#d2d2d2] hover:bg-white text-black font-handwriting text-2xl font-bold flex items-center justify-center shadow-xl border border-[#df9b6d] focus:outline-none transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? '...' : 'GO'}
+                </motion.button>
+
+              </form>
+            )}
           </motion.div>
         </div>
       </div>

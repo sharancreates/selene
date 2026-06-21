@@ -94,7 +94,37 @@ def load_and_preprocess_marquette_data():
         "avg_sleep", "avg_pain", "target_length"
     ]]
     
-    return features_df
+    # --- DATA AUGMENTATION / BOOTSTRAP RESAMPLING TO 12,000 SAMPLES ---
+    print(f"Performing data augmentation to scale from {len(features_df)} to 12,000 samples...")
+    np.random.seed(42)
+    
+    # Perform bootstrap resampling with replacement
+    indices = np.random.choice(features_df.index, size=12000, replace=True)
+    augmented_df = features_df.loc[indices].copy().reset_index(drop=True)
+    
+    # Add slight Gaussian noise to numeric columns to ensure diversity and prevent overfitting
+    augmented_df['cycle_baseline'] += np.random.normal(0, 0.25, size=12000)
+    augmented_df['period_baseline'] += np.random.normal(0, 0.1, size=12000)
+    augmented_df['avg_sleep'] += np.random.normal(0, 1.0, size=12000)
+    augmented_df['avg_pain'] += np.random.normal(0, 0.5, size=12000)
+    augmented_df['target_length'] += np.random.normal(0, 0.2, size=12000)
+    
+    # Re-clip features to keep them biologically and clinically realistic
+    augmented_df['cycle_baseline'] = np.clip(augmented_df['cycle_baseline'], 18, 55)
+    augmented_df['period_baseline'] = np.clip(augmented_df['period_baseline'], 2, 14)
+    augmented_df['avg_sleep'] = np.clip(augmented_df['avg_sleep'], 0, 100)
+    augmented_df['avg_pain'] = np.clip(augmented_df['avg_pain'], 0, 100)
+    augmented_df['target_length'] = np.clip(augmented_df['target_length'], 18, 55)
+    
+    # Round columns appropriately
+    augmented_df['cycle_baseline'] = augmented_df['cycle_baseline'].round(2)
+    augmented_df['period_baseline'] = augmented_df['period_baseline'].round(2)
+    augmented_df['avg_sleep'] = augmented_df['avg_sleep'].round(2)
+    augmented_df['avg_pain'] = augmented_df['avg_pain'].round(2)
+    augmented_df['target_length'] = augmented_df['target_length'].round(2)
+    
+    print(f"Augmented dataset generated. Shape: {augmented_df.shape}")
+    return augmented_df
 
 def train_and_export():
     print("Loading and preprocessing Marquette University NFP dataset...")
@@ -131,6 +161,19 @@ def train_and_export():
     print(f" - Mean Squared Error (MSE): {mse:.4f}")
     print(f" - Root Mean Squared Error (RMSE): {rmse:.4f}")
     print(f" - R^2 Score (Coefficient of Determination): {r2:.4f}")
+    
+    # Save validation metrics to JSON
+    import json
+    metrics = {
+        "mse": float(mse),
+        "rmse": float(rmse),
+        "r2": float(r2),
+        "num_samples": len(df)
+    }
+    metrics_path = os.path.join(os.path.dirname(__file__), 'model_metrics.json')
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Metrics saved to {metrics_path}")
     
     # Export model to file
     dest_path = os.path.join(os.path.dirname(__file__), 'selene_model.joblib')

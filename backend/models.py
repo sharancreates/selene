@@ -142,6 +142,10 @@ class User(db.Model):
     has_endo = db.Column(db.Boolean, nullable=False, default=False)
     has_onboarded = db.Column(db.Boolean, nullable=False, default=False)
     
+    # Medical Disclaimer Agreement
+    disclaimer_accepted = db.Column(db.Boolean, nullable=False, default=False)
+    disclaimer_signed_name = db.Column(EncryptedString, nullable=True)
+    
     # Soft delete flags for 30-day recovery window
     is_deleted = db.Column(db.Boolean, nullable=False, default=False)
     deleted_at = db.Column(db.DateTime, nullable=True)
@@ -159,7 +163,9 @@ class User(db.Model):
             "has_pcos": self.has_pcos,
             "has_pmdd": self.has_pmdd,
             "has_endo": self.has_endo,
-            "has_onboarded": self.has_onboarded
+            "has_onboarded": self.has_onboarded,
+            "disclaimer_accepted": self.disclaimer_accepted,
+            "disclaimer_signed_name": self.disclaimer_signed_name
         }
 
     def __repr__(self):
