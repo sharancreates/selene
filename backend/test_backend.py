@@ -408,18 +408,16 @@ class SeleneBackendTestCase(unittest.TestCase):
 
         connection = db.engine.raw_connection()
         cursor = connection.cursor()
-        cursor.execute("SELECT phase, energy_level, pelvic_pain, basal_body_temp FROM daily_logs LIMIT 1")
+        cursor.execute("SELECT encrypted_data FROM daily_logs LIMIT 1")
         row = cursor.fetchone()
         cursor.close()
         connection.close()
 
-        raw_phase, raw_energy, raw_pelvic, raw_temp = row
-        self.assertNotEqual(raw_phase, "menstrual")
-        self.assertTrue(raw_phase.startswith("gAAAAA"))
-        self.assertNotEqual(str(raw_energy), "75")
-        self.assertTrue(str(raw_energy).startswith("gAAAAA"))
-        self.assertNotEqual(str(raw_temp), "98.4")
-        self.assertTrue(str(raw_temp).startswith("gAAAAA"))
+        encrypted_data = row[0]
+        self.assertIsNotNone(encrypted_data)
+        self.assertNotIn("menstrual", encrypted_data)
+        self.assertNotIn("75", encrypted_data)
+        self.assertNotIn("98.4", encrypted_data)
 
     def test_verify_pin(self):
         """
@@ -553,24 +551,29 @@ class SeleneBackendTestCase(unittest.TestCase):
         db.session.commit()
 
         # 2. Insert a log entry manually encrypted under the old global key
-        from cryptography.fernet import Fernet
-        old_cipher = Fernet(b"p_Mh8N-YsKDORo4aEg5zYf51CJ8KD0qkmMDEOdrCVo4=")
-        
-        # Insert raw encrypted fields directly into the DB using raw connection
-        connection = db.engine.raw_connection()
-        cursor = connection.cursor()
-        
-        raw_phase = old_cipher.encrypt(b"menstrual").decode()
-        raw_energy = old_cipher.encrypt(b"75").decode()
-        raw_temp = old_cipher.encrypt(b"98.4").decode()
-        
-        cursor.execute(
-            "INSERT INTO daily_logs (user_id, log_date, phase, energy_level, basal_body_temp) VALUES (?, ?, ?, ?, ?)",
-            (legacy_user.id, "2026-06-01", raw_phase, raw_energy, raw_temp)
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        import os
+        import base64
+        old_global_key = base64.b64decode("p_Mh8N-YsKDORo4aEg5zYf51CJ8KD0qkmMDEOdrCVo4=".replace('-', '+').replace('_', '/'))
+        aesgcm = AESGCM(old_global_key)
+        iv = os.urandom(12)
+        legacy_log_json = json.dumps({
+            "phase": "menstrual",
+            "energy_level": 75,
+            "pelvic_pain": 20,
+            "basal_body_temp": 98.4
+        })
+        ciphertext = aesgcm.encrypt(iv, legacy_log_json.encode('utf-8'), None)
+        combined = iv + ciphertext
+        raw_encrypted_data = base64.b64encode(combined).decode('utf-8')
+
+        log = DailyLog(
+            user_id=legacy_user.id,
+            log_date=date(2026, 6, 1),
+            encrypted_data=raw_encrypted_data
         )
-        connection.commit()
-        cursor.close()
-        connection.close()
+        db.session.add(log)
+        db.session.commit()
 
         # 3. Log in with the legacy user. This should trigger the legacy migration
         res_login = self.client.post('/api/auth/login', json={"username": "legacy_rotator", "pin": "123456"})
@@ -593,18 +596,14 @@ class SeleneBackendTestCase(unittest.TestCase):
         # 5. Retrieve new raw ciphertexts from the DB and verify that they are encrypted under the new key
         connection = db.engine.raw_connection()
         cursor = connection.cursor()
-        cursor.execute("SELECT phase, energy_level, basal_body_temp FROM daily_logs WHERE user_id = ?", (legacy_user.id,))
+        cursor.execute("SELECT encrypted_data FROM daily_logs WHERE user_id = ?", (legacy_user.id,))
         row_new = cursor.fetchone()
         cursor.close()
         connection.close()
 
-        raw_phase_2, raw_energy_2, raw_temp_2 = row_new
-        self.assertTrue(raw_phase_2.startswith("gAAAAA"))
-        
-        # Verify that ciphertexts have changed
-        self.assertNotEqual(raw_phase, raw_phase_2)
-        self.assertNotEqual(raw_energy, raw_energy_2)
-        self.assertNotEqual(raw_temp, raw_temp_2)
+        encrypted_data_new = row_new[0]
+        self.assertIsNotNone(encrypted_data_new)
+        self.assertNotEqual(raw_encrypted_data, encrypted_data_new)
 
     def test_username_length_validation(self):
         """
@@ -631,7 +630,10 @@ class SeleneBackendTestCase(unittest.TestCase):
         self.app.config['TESTING'] = False
         try:
             # 1. Try registration without CSRF headers
-            register_payload = {"username": "csrf_test_user", "pin": "123456"}
+            register_payload = {
+                "username": "csrf_test_user", "pin": "123456",
+                "terms_accepted": True, "terms_signed_name": "CSRF Tester"
+            }
             res = self.client.post('/api/auth/register', json=register_payload)
             self.assertEqual(res.status_code, 400)
             self.assertIn("CSRF token validation failed.", res.get_json().get('error', ''))
@@ -1203,6 +1205,81 @@ class SeleneBackendTestCase(unittest.TestCase):
             self.assertFalse(user_db.has_pmdd)
             self.assertTrue(user_db.has_endo)
             self.assertTrue(user_db.has_onboarded)
+
+    def test_public_health_stats_calibration(self):
+        """
+        Verify public health stats endpoint is accessible and returns population baselines when count < 5.
+        """
+        register_payload = {
+            "username": "user1",
+            "pin": "123456",
+            "cycle_length_baseline": 28,
+            "period_length_baseline": 5,
+            "has_pcos": False,
+            "has_pmdd": False,
+            "has_endo": False
+        }
+        self.client.post('/api/auth/register', json=register_payload)
+        
+        res = self.client.get('/api/public-health/stats')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data['status'], 'calibrating_cohort')
+        self.assertIn('general population', data['message'].lower())
+        self.assertEqual(data['cycle_length_stats']['average'], 28.0)
+
+    def test_public_health_stats_active_cohort(self):
+        """
+        Verify public health stats endpoint computes dynamically when user count >= 5.
+        """
+        for i in range(5):
+            register_payload = {
+                "username": f"cohort_user_{i}",
+                "pin": "123456",
+                "cycle_length_baseline": 30 + i,
+                "period_length_baseline": 5,
+                "has_pcos": i % 2 == 0,
+                "has_pmdd": False,
+                "has_endo": False
+            }
+            res = self.client.post('/api/auth/register', json=register_payload)
+            self.assertEqual(res.status_code, 201)
+            user_id = res.get_json()['user']['id']
+            user = db.session.get(User, user_id)
+            user.has_onboarded = True
+            db.session.commit()
+
+        res = self.client.get('/api/public-health/stats')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data['status'], 'active_cohort')
+        self.assertEqual(data['total_users_represented'], 5)
+        self.assertEqual(data['cycle_length_stats']['average'], 32.0)
+        self.assertEqual(data['chronic_conditions']['pcos_percentage'], 60.0)
+
+    def test_pdf_export_retrieval(self):
+        """
+        Verify PDF exporter returns correct mime-type, caching headers, and attachment headers.
+        """
+        register_payload = {
+            "username": "pdf_test_user",
+            "pin": "123456",
+            "cycle_length_baseline": 28,
+            "period_length_baseline": 5,
+            "has_pcos": False,
+            "has_pmdd": False,
+            "has_endo": False
+        }
+        reg_res = self.client.post('/api/auth/register', json=register_payload)
+        token = reg_res.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+
+        res = self.client.get('/api/logs/export-pdf', headers=headers)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.mimetype, 'application/pdf')
+        self.assertIn('attachment', res.headers.get('Content-Disposition', ''))
+        self.assertIn('selene_consultation_report_pdf_test_user.pdf', res.headers.get('Content-Disposition', ''))
+        self.assertIn('no-cache', res.headers.get('Cache-Control', ''))
 
 
 if __name__ == '__main__':

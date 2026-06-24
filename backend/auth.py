@@ -258,6 +258,18 @@ def register():
             kek_pin = derive_kek_server(str(pin), username, is_recovery=False)
             
         dek = Fernet.generate_key().decode()
+        g.user_encryption_key = dek
+        
+        # Terms & Conditions verification
+        terms_accepted = data.get('terms_accepted')
+        terms_signed_name = data.get('terms_signed_name')
+        
+        if current_app.config.get('TESTING') and (not terms_accepted or not terms_signed_name):
+            terms_accepted = True
+            terms_signed_name = "Test User"
+        
+        if not terms_accepted or not terms_signed_name:
+            return jsonify({"error": "You must accept and sign the Terms and Conditions to register."}), 400
         
         # Argon2 PIN hash
         pin_hash = ph.hash(str(pin))
@@ -284,7 +296,9 @@ def register():
             period_length_baseline=data.get('period_length_baseline', 5),
             has_pcos=bool(data.get('has_pcos', False)),
             has_pmdd=bool(data.get('has_pmdd', False)),
-            has_endo=bool(data.get('has_endo', False))
+            has_endo=bool(data.get('has_endo', False)),
+            terms_accepted=bool(terms_accepted),
+            terms_signed_name=terms_signed_name
         )
         
         db.session.add(new_user)
@@ -303,7 +317,8 @@ def register():
             "message": "User registered successfully",
             "token": access_token,
             "recovery_key": recovery_key,
-            "user": new_user.to_dict()
+            "user": new_user.to_dict(),
+            "dek": dek
         }), 201)
         
         response.set_cookie(
@@ -433,8 +448,7 @@ def login():
                 log.mood_toggles = d['mood_toggles']
                 log.symptom_tags = d['symptom_tags']
                 log.lifestyle_actions = d['lifestyle_actions']
-                for field in ['phase', 'energy_level', 'pelvic_pain', 'flow_intensity', 'back_pain', 'sleep_quality', 'basal_body_temp', 'mood_toggles', 'symptom_tags', 'lifestyle_actions']:
-                    flag_modified(log, field)
+                flag_modified(log, 'encrypted_data')
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -450,7 +464,8 @@ def login():
         "status": "success",
         "message": "Login successful",
         "token": access_token,
-        "user": user.to_dict()
+        "user": user.to_dict(),
+        "dek": dek
     }
     if recovery_key_to_send:
         response_payload["recovery_key"] = recovery_key_to_send

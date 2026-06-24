@@ -272,8 +272,27 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
       });
       const data = await response.json();
       if (response.ok && data.logs) {
-        setAllLogs(data.logs);
-        const logForDay = data.logs.find(l => l.log_date === selectedDate);
+        const dek = sessionStorage.getItem('selene_dek');
+        const processedLogs = [];
+        for (const log of data.logs) {
+          if (log.encrypted_data && dek) {
+            try {
+              const decryptedStr = await decryptData(log.encrypted_data, dek);
+              const decryptedJson = JSON.parse(decryptedStr);
+              processedLogs.push({
+                ...log,
+                ...decryptedJson
+              });
+            } catch (err) {
+              console.error("Failed to decrypt log client-side:", err);
+              processedLogs.push(log);
+            }
+          } else {
+            processedLogs.push(log);
+          }
+        }
+        setAllLogs(processedLogs);
+        const logForDay = processedLogs.find(l => l.log_date === selectedDate);
         if (logForDay) {
           setActivePhase(logForDay.phase || 'menstrual');
           setBbtInput(logForDay.basal_body_temp !== null ? String(logForDay.basal_body_temp) : '');
@@ -544,15 +563,30 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
       payload.lifestyle_actions = { meds: lutealMeds };
     }
 
+    const dek = sessionStorage.getItem('selene_dek');
+    let syncPayload = { ...payload };
+    if (dek) {
+      try {
+        const encrypted = await encryptData(JSON.stringify(payload), dek);
+        syncPayload = {
+          log_date: payload.log_date,
+          phase: payload.phase,
+          encrypted_data: encrypted
+        };
+      } catch (err) {
+        console.error("Client-side encryption failed, using fallback:", err);
+      }
+    }
+
     if (!isOnline) {
       // Offline support
       const queuedLogs = await getOfflineLogs();
-      const filtered = queuedLogs.filter(l => l.log_date !== payload.log_date);
-      filtered.push(payload);
+      const filtered = queuedLogs.filter(l => l.log_date !== syncPayload.log_date);
+      filtered.push(syncPayload);
       await saveOfflineLogs(filtered);
 
       setAllLogs(prev => {
-        const copy = prev.filter(l => l.log_date !== payload.log_date);
+        const copy = prev.filter(l => l.log_date !== syncPayload.log_date);
         copy.push(payload);
         return copy;
       });
@@ -570,7 +604,7 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
           'Authorization': `Bearer ${token}`,
           'X-CSRF-Token': getCookie('csrf_token')
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(syncPayload)
       });
       const data = await response.json();
       if (response.ok) {
@@ -756,6 +790,12 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
         </div>
 
         <div className="flex items-center gap-4 flex-wrap justify-end">
+          <button
+            onClick={() => setView('public-health')}
+            className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"
+          >
+            Public Health Stats
+          </button>
           <button
             onClick={() => setView('calendar')}
             className="border border-black text-black hover:bg-black hover:text-white font-handwriting text-xl px-4 py-1.5 rounded-full transition-all duration-300 cursor-pointer focus:outline-none"

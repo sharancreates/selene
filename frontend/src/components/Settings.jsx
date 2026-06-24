@@ -53,6 +53,8 @@ export default function Settings({ username = 'user', setView, token, user, setU
 
   // Data
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState('');
 
   const handleToggleCondition = (key) => {
     setConditions(prev => ({ ...prev, [key]: !prev[key] }));
@@ -178,6 +180,48 @@ export default function Settings({ username = 'user', setView, token, user, setU
     } catch (err) {
       console.error(err);
       showToast("Failed to export FHIR data", "error");
+    }
+  };
+
+  const handleExportPDFReport = async () => {
+    if (!token) {
+      showToast("Please log in to export settings.", "error");
+      return;
+    }
+    setShowPasswordModal(true);
+  };
+
+  const executePDFExport = async () => {
+    if (!token) {
+      showToast("Please log in to export settings.", "error");
+      return;
+    }
+    if (!pdfPassword) {
+      showToast("Password is required to encrypt the PDF.", "error");
+      return;
+    }
+    setShowPasswordModal(false);
+    try {
+      const response = await fetch(`/api/logs/export-pdf?password=${encodeURIComponent(pdfPassword)}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) throw new Error("PDF export failed");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `selene_consultation_report_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast("Consultation PDF exported successfully! 📄", "success");
+      setPdfPassword('');
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to export PDF report", "error");
     }
   };
 
@@ -433,12 +477,12 @@ export default function Settings({ username = 'user', setView, token, user, setU
             All your data lives locally on your device. No cloud, no trackers, ever.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleExportData}
-              className="flex-1 bg-[#1e2722] text-white font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md hover:bg-[#2a3830] transition-colors duration-200 cursor-pointer focus:outline-none"
+              className="bg-[#1e2722] text-white font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md hover:bg-[#2a3830] transition-colors duration-200 cursor-pointer focus:outline-none text-center"
             >
               Export My Data
             </motion.button>
@@ -447,7 +491,7 @@ export default function Settings({ username = 'user', setView, token, user, setU
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleExportFHIRData}
-              className="flex-1 bg-[#8ba68b] text-black font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md hover:bg-[#7a957a] transition-colors duration-200 cursor-pointer focus:outline-none"
+              className="bg-[#8ba68b] text-black font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md hover:bg-[#7a957a] transition-colors duration-200 cursor-pointer focus:outline-none text-center"
             >
               Export Clinical FHIR Data
             </motion.button>
@@ -455,8 +499,17 @@ export default function Settings({ username = 'user', setView, token, user, setU
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
+              onClick={handleExportPDFReport}
+              className="bg-[#df9b6d] text-black font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md hover:bg-[#d08b5d] transition-colors duration-200 cursor-pointer focus:outline-none text-center"
+            >
+              Export Doctor PDF Report
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               onClick={handleDeleteData}
-              className={`flex-1 font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md transition-all duration-300 cursor-pointer focus:outline-none border-2 ${
+              className={`font-handwriting text-xl px-6 py-3.5 rounded-2xl shadow-md transition-all duration-300 cursor-pointer focus:outline-none border-2 text-center ${
                 showDeleteConfirm
                   ? 'bg-red-500 text-white border-red-600 hover:bg-red-600'
                   : 'bg-transparent text-red-600 border-red-400 hover:bg-red-50'
@@ -487,6 +540,62 @@ export default function Settings({ username = 'user', setView, token, user, setU
           Save Settings ✨
         </motion.button>
       </div>
+
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-[#eed9c4] text-[#362113] rounded-[2.5rem] border border-black/10 p-6 sm:p-8 max-w-md w-full shadow-2xl flex flex-col gap-6"
+          >
+            <div>
+              <h3 className="font-handwriting text-3xl font-black text-center mb-1 text-[#362113]">
+                Encrypt Report
+              </h3>
+              <p className="font-sans text-xs text-center text-[#362113]/70 uppercase tracking-widest font-bold">
+                Secure Physician Review PDF
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="font-handwriting text-black text-xl pl-1">
+                Enter a password to encrypt this PDF:
+              </label>
+              <input
+                type="password"
+                value={pdfPassword}
+                onChange={(e) => setPdfPassword(e.target.value)}
+                placeholder="Choose a password"
+                className="w-full bg-white/40 focus:bg-white text-black font-sans text-sm px-4 py-2.5 rounded-2xl focus:outline-none transition-colors duration-200 border border-black/10 shadow-inner"
+              />
+              <p className="text-[10px] text-black/60 pl-1 leading-tight">
+                This password will be required by your doctor or anyone else to open the generated PDF report.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordModal(false);
+                  setPdfPassword('');
+                }}
+                className="flex-1 bg-transparent hover:bg-black/5 text-[#362113] border border-black/10 font-bold py-2.5 rounded-full transition-colors font-sans text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executePDFExport}
+                disabled={!pdfPassword}
+                className="flex-1 bg-[#1e2722] hover:bg-black text-white font-bold py-2.5 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-sans text-sm"
+              >
+                Export & Encrypt
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Footer */}
       <AppFooter />

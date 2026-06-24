@@ -12,6 +12,7 @@ import Dashboard from './components/Dashboard';
 import CalendarView from './components/CalendarView';
 import Settings from './components/Settings';
 import Onboarding from './components/Onboarding';
+import PublicHealthStats from './components/PublicHealthStats';
 import { motion, AnimatePresence } from 'framer-motion';
 
 
@@ -30,6 +31,7 @@ function App() {
     if (path === '/dashboard') return 'dashboard';
     if (path === '/calendar') return 'calendar';
     if (path === '/settings') return 'settings';
+    if (path === '/public-health') return 'public-health';
     return 'landing';
   };
 
@@ -121,7 +123,7 @@ function App() {
         setIsUnlocked(!camo);
         // Restore the correct view for the current URL
         const path = window.location.pathname;
-        const viewMap = { '/dashboard': 'dashboard', '/calendar': 'calendar', '/settings': 'settings' };
+        const viewMap = { '/dashboard': 'dashboard', '/calendar': 'calendar', '/settings': 'settings', '/public-health': 'public-health' };
         if (viewMap[path]) setViewInternal(viewMap[path]);
       } else {
         const wasLoggedIn = localStorage.getItem('selene_logged_in') === 'true';
@@ -200,6 +202,7 @@ function App() {
     else if (newView === 'dashboard') path = '/dashboard';
     else if (newView === 'calendar') path = '/calendar';
     else if (newView === 'settings') path = '/settings';
+    else if (newView === 'public-health') path = '/public-health';
     
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
@@ -221,7 +224,7 @@ function App() {
     setTimeout(() => { isAuthenticating.current = false; }, 2000);
   };
 
-  const isFullScreenView = view === 'dashboard' || view === 'calendar' || view === 'settings' || view === 'onboarding';
+  const isFullScreenView = view === 'dashboard' || view === 'calendar' || view === 'settings' || view === 'onboarding' || view === 'public-health';
 
   if (!isUnlocked && token) {
     return <CalculatorGuard token={token} username={username} onUnlock={() => setIsUnlocked(true)} />;
@@ -261,6 +264,8 @@ function App() {
         <CalendarView username={username} setView={setView} token={token} user={user} onLogout={handleLogout} selectedDate={selectedDate} setSelectedDate={setSelectedDate} />
       ) : view === 'settings' ? (
         <Settings username={username} setView={setView} token={token} user={user} setUser={setUser} onLogout={handleLogout} showToast={showToast} />
+      ) : view === 'public-health' ? (
+        <PublicHealthStats setView={setView} token={token} />
       ) : (
         <Dashboard username={username} setView={setView} token={token} user={user} onLogout={handleLogout} selectedDate={selectedDate} setSelectedDate={setSelectedDate} showToast={showToast} />
       )}

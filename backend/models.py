@@ -5,7 +5,8 @@ import secrets
 import hashlib
 import os
 import json
-from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import base64
 
 # Shared database instance to be initialized in app.py
 db = SQLAlchemy()
@@ -26,10 +27,10 @@ def is_valid_pin(pin):
     return True, None
 
 
-def get_cipher():
+def get_cipher_key():
     from flask import g, has_app_context
     if has_app_context() and hasattr(g, 'user_encryption_key') and g.user_encryption_key:
-        return Fernet(g.user_encryption_key.encode())
+        return g.user_encryption_key
     raise ValueError("User encryption key is missing. Active session or context required.")
 
 
@@ -37,23 +38,67 @@ def encrypt_val(val):
     if val is None:
         return None
     val_str = str(val)
-    cipher = get_cipher()
-    return cipher.encrypt(val_str.encode()).decode()
+    # Check if it already looks like a valid base64-encoded AES-GCM ciphertext
+    if isinstance(val, str) and len(val) > 20:
+        try:
+            decoded = base64.b64decode(val.replace('-', '+').replace('_', '/'), validate=True)
+            if len(decoded) >= 12:
+                # Already encrypted!
+                return val
+        except Exception:
+            pass
+
+    try:
+        dek = get_cipher_key()
+        key = base64.b64decode(dek.replace('-', '+').replace('_', '/'))
+        aesgcm = AESGCM(key)
+        iv = os.urandom(12)
+        ciphertext = aesgcm.encrypt(iv, val_str.encode('utf-8'), None)
+        combined = iv + ciphertext
+        return base64.b64encode(combined).decode('utf-8')
+    except Exception as e:
+        raise ValueError(f"Encryption failed: {str(e)}")
 
 
 def decrypt_val(encrypted_val, target_type=str):
     if encrypted_val is None:
         return None
-    cipher = get_cipher()
-    decrypted_str = cipher.decrypt(encrypted_val.encode()).decode()
-    if target_type == int:
-        return int(decrypted_str)
-    elif target_type == float:
-        return float(decrypted_str)
-    elif target_type == dict:
-        return json.loads(decrypted_str)
-    return decrypted_str
+    val_str = str(encrypted_val)
+    if not (val_str.endswith("==") or len(val_str) > 20):
+        # Fallback to direct casting for plaintext/legacy values
+        try:
+            if target_type == int:
+                return int(val_str)
+            elif target_type == float:
+                return float(val_str)
+            elif target_type == dict:
+                return json.loads(val_str)
+            return val_str
+        except Exception:
+            return val_str
 
+    try:
+        dek = get_cipher_key()
+        key = base64.b64decode(dek.replace('-', '+').replace('_', '/'))
+        raw_data = base64.b64decode(val_str)
+        if len(raw_data) < 12:
+            return val_str
+        iv = raw_data[:12]
+        ciphertext = raw_data[12:]
+        aesgcm = AESGCM(key)
+        decrypted_bytes = aesgcm.decrypt(iv, ciphertext, None)
+        decrypted_str = decrypted_bytes.decode('utf-8')
+        
+        if target_type == int:
+            return int(decrypted_str)
+        elif target_type == float:
+            return float(decrypted_str)
+        elif target_type == dict:
+            return json.loads(decrypted_str)
+        return decrypted_str
+    except Exception:
+        # Fallback to raw string if decryption fails (e.g. key mismatch or not actually encrypted)
+        return val_str
 
 
 class EncryptedString(TypeDecorator):
@@ -146,6 +191,10 @@ class User(db.Model):
     disclaimer_accepted = db.Column(db.Boolean, nullable=False, default=False)
     disclaimer_signed_name = db.Column(EncryptedString, nullable=True)
     
+    # Terms & Conditions Agreement
+    terms_accepted = db.Column(db.Boolean, nullable=False, default=False)
+    terms_signed_name = db.Column(EncryptedString, nullable=True)
+    
     # Soft delete flags for 30-day recovery window
     is_deleted = db.Column(db.Boolean, nullable=False, default=False)
     deleted_at = db.Column(db.DateTime, nullable=True)
@@ -165,7 +214,9 @@ class User(db.Model):
             "has_endo": self.has_endo,
             "has_onboarded": self.has_onboarded,
             "disclaimer_accepted": self.disclaimer_accepted,
-            "disclaimer_signed_name": self.disclaimer_signed_name
+            "disclaimer_signed_name": self.disclaimer_signed_name,
+            "terms_accepted": self.terms_accepted,
+            "terms_signed_name": self.terms_signed_name
         }
 
     def __repr__(self):
@@ -223,28 +274,113 @@ class DailyLog(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     log_date = db.Column(db.Date, nullable=False, index=True)
     
-    # Cycle phase string (menstrual, follicular, ovulatory, luteal) (Encrypted)
-    phase = db.Column(EncryptedString, nullable=False)
-    
-    # Symptom spectrum fields (bounded in the 0–100 integer range) (Encrypted)
-    energy_level = db.Column(EncryptedInt, nullable=True)
-    pelvic_pain = db.Column(EncryptedInt, nullable=True)
-    flow_intensity = db.Column(EncryptedInt, nullable=True)
-    back_pain = db.Column(EncryptedInt, nullable=True)
-    sleep_quality = db.Column(EncryptedInt, nullable=True)
-    
-    # Physiological vitals (Encrypted)
-    basal_body_temp = db.Column(EncryptedFloat, nullable=True)
-    
-    # Flexible JSON objects: mood tracking, condition symptoms, and lifestyle activities. (Encrypted)
-    mood_toggles = db.Column(EncryptedJSON, nullable=True, default=dict)
-    symptom_tags = db.Column(EncryptedJSON, nullable=True, default=dict)
-    lifestyle_actions = db.Column(EncryptedJSON, nullable=True, default=dict)
+    # Store all encrypted symptom values in a single text column
+    encrypted_data = db.Column(db.Text, nullable=True)
     
     # Composite unique key: one log per user per calendar day
     __table_args__ = (
         db.UniqueConstraint('user_id', 'log_date', name='uq_user_log_date'),
     )
+
+    @property
+    def decrypted_dict(self):
+        if not hasattr(self, '_decrypted_cache'):
+            if not self.encrypted_data:
+                self._decrypted_cache = {}
+            else:
+                try:
+                    decrypted_str = decrypt_val(self.encrypted_data, str)
+                    self._decrypted_cache = json.loads(decrypted_str)
+                except Exception:
+                    self._decrypted_cache = {}
+        return self._decrypted_cache
+
+    def update_encrypted_data(self, key, value):
+        d = dict(self.decrypted_dict)
+        d[key] = value
+        self._decrypted_cache = d
+        self.encrypted_data = encrypt_val(json.dumps(d))
+
+    @property
+    def phase(self):
+        val = self.decrypted_dict.get('phase')
+        return val if val is not None else 'follicular'
+
+    @phase.setter
+    def phase(self, val):
+        self.update_encrypted_data('phase', val)
+
+    @property
+    def energy_level(self):
+        return self.decrypted_dict.get('energy_level')
+
+    @energy_level.setter
+    def energy_level(self, val):
+        self.update_encrypted_data('energy_level', val)
+
+    @property
+    def pelvic_pain(self):
+        return self.decrypted_dict.get('pelvic_pain')
+
+    @pelvic_pain.setter
+    def pelvic_pain(self, val):
+        self.update_encrypted_data('pelvic_pain', val)
+
+    @property
+    def flow_intensity(self):
+        return self.decrypted_dict.get('flow_intensity')
+
+    @flow_intensity.setter
+    def flow_intensity(self, val):
+        self.update_encrypted_data('flow_intensity', val)
+
+    @property
+    def back_pain(self):
+        return self.decrypted_dict.get('back_pain')
+
+    @back_pain.setter
+    def back_pain(self, val):
+        self.update_encrypted_data('back_pain', val)
+
+    @property
+    def sleep_quality(self):
+        return self.decrypted_dict.get('sleep_quality')
+
+    @sleep_quality.setter
+    def sleep_quality(self, val):
+        self.update_encrypted_data('sleep_quality', val)
+
+    @property
+    def basal_body_temp(self):
+        return self.decrypted_dict.get('basal_body_temp')
+
+    @basal_body_temp.setter
+    def basal_body_temp(self, val):
+        self.update_encrypted_data('basal_body_temp', val)
+
+    @property
+    def mood_toggles(self):
+        return self.decrypted_dict.get('mood_toggles') or {}
+
+    @mood_toggles.setter
+    def mood_toggles(self, val):
+        self.update_encrypted_data('mood_toggles', val)
+
+    @property
+    def symptom_tags(self):
+        return self.decrypted_dict.get('symptom_tags') or {}
+
+    @symptom_tags.setter
+    def symptom_tags(self, val):
+        self.update_encrypted_data('symptom_tags', val)
+
+    @property
+    def lifestyle_actions(self):
+        return self.decrypted_dict.get('lifestyle_actions') or {}
+
+    @lifestyle_actions.setter
+    def lifestyle_actions(self, val):
+        self.update_encrypted_data('lifestyle_actions', val)
 
     def to_dict(self):
         """Helper method to serialize a daily log entry with legacy read fallbacks."""
@@ -295,7 +431,6 @@ class DailyLog(db.Model):
             "lifestyle_actions": self.lifestyle_actions,
             "clinical_codes": CLINICAL_CODE_MAPPING
         }
-
     def __repr__(self):
         return f"<DailyLog User {self.user_id} on {self.log_date}>"
 

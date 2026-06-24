@@ -11,12 +11,14 @@ try:
     from .auth import auth_bp, limiter
     from .logs import logs_bp
     from .predict import predict_bp
+    from .public_health import public_health_bp
 except ImportError:
     from config import Config
     from models import db
     from auth import auth_bp, limiter
     from logs import logs_bp
     from predict import predict_bp
+    from public_health import public_health_bp
 
 
 import json
@@ -80,6 +82,7 @@ def create_app(config_class=Config):
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(logs_bp, url_prefix='/api/logs')
     app.register_blueprint(predict_bp, url_prefix='/api/predict')
+    app.register_blueprint(public_health_bp, url_prefix='/api/public-health')
     
     # CSRF Protection Hook for Single Page Application
     @app.before_request

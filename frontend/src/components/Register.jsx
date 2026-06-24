@@ -23,6 +23,8 @@ const getCookie = (name) => {
   const [consentHealth, setConsentHealth] = useState(false);
   const [consentKey, setConsentKey] = useState(false);
   const [consentWithdraw, setConsentWithdraw] = useState(false);
+  const [consentTerms, setConsentTerms] = useState(false);
+  const [termsSignatureName, setTermsSignatureName] = useState('');
 
 
 
@@ -61,7 +63,9 @@ const getCookie = (name) => {
           period_length_baseline: 5,
           has_pcos: false,
           has_pmdd: false,
-          has_endo: false
+          has_endo: false,
+          terms_accepted: true,
+          terms_signed_name: termsSignatureName
         })
       });
       
@@ -70,6 +74,7 @@ const getCookie = (name) => {
         // ADD this line to persist the camouflage mode setting
         localStorage.setItem('selene_camouflage_mode', camouflageMode ? 'true' : 'false');
         sessionStorage.setItem('selene_session_key', kek_pin);
+        sessionStorage.setItem('selene_dek', data.dek);
         
         setRegUserData(data.user);
         setRegToken(data.token || '');
@@ -425,6 +430,31 @@ const getCookie = (name) => {
                 />
                 <span className="leading-tight">I acknowledge that I can withdraw this consent and permanently erase my data at any time under account settings.</span>
               </label>
+
+              <label className="flex items-start gap-3 cursor-pointer text-xs select-none">
+                <input 
+                  type="checkbox" 
+                  checked={consentTerms} 
+                  onChange={(e) => setConsentTerms(e.target.checked)}
+                  className="w-4 h-4 rounded border-black/20 text-[#8ba68b] focus:ring-transparent mt-0.5"
+                />
+                <span className="leading-tight">I consent and agree to the Terms and Conditions of Selene, including the cryptographic data boundaries and privacy manifesto.</span>
+              </label>
+
+              {consentTerms && (
+                <div className="flex flex-col gap-1 mt-2">
+                  <label className="text-[10px] uppercase font-bold text-[#362113]/70 pl-1">
+                    Type your full name to sign this agreement:
+                  </label>
+                  <input
+                    type="text"
+                    value={termsSignatureName}
+                    onChange={(e) => setTermsSignatureName(e.target.value)}
+                    placeholder="Your Full Name"
+                    className="w-full bg-white/40 focus:bg-white text-black font-sans text-xs px-3 py-1.5 rounded-xl focus:outline-none transition-colors duration-200 border border-black/10"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-2">
@@ -435,6 +465,8 @@ const getCookie = (name) => {
                   setConsentHealth(false);
                   setConsentKey(false);
                   setConsentWithdraw(false);
+                  setConsentTerms(false);
+                  setTermsSignatureName('');
                 }}
                 className="flex-1 bg-transparent hover:bg-black/5 text-[#362113] border border-black/10 font-bold py-2.5 rounded-full transition-colors font-sans text-sm"
               >
@@ -442,7 +474,7 @@ const getCookie = (name) => {
               </button>
               <button
                 type="button"
-                disabled={!consentHealth || !consentKey || !consentWithdraw}
+                disabled={!consentHealth || !consentKey || !consentWithdraw || !consentTerms || !termsSignatureName.trim()}
                 onClick={() => {
                   setShowConsentModal(false);
                   executeRegistration();

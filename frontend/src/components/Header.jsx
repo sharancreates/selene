@@ -15,7 +15,17 @@ export default function Header({ currentView, setView }) {
       </motion.button>
       
       {/* Navigation action */}
-      <div>
+      <div className="flex gap-4 items-center">
+        {currentView === 'landing' && (
+          <motion.button 
+            onClick={() => setView('public-health')}
+            className="border-2 border-[#4d5b4a] text-[#4d5b4a] hover:bg-[#4d5b4a] hover:text-white font-handwriting text-2xl px-6 py-2 rounded-full transition-all duration-300 cursor-pointer"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            Public Health Stats
+          </motion.button>
+        )}
         {currentView === 'landing' ? (
           <motion.button 
             onClick={() => setView('login')}
