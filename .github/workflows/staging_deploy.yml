@@ -73,6 +73,10 @@ jobs:
     needs: test-and-build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main'
+    env:
+      STAGING_HOST: ${{ secrets.STAGING_HOST }}
+      STAGING_USER: ${{ secrets.STAGING_USER }}
+      STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
 
     steps:
       - name: Checkout code
@@ -80,23 +84,23 @@ jobs:
 
       # Example deploy step: Deploying via SSH & Rsync
       - name: Deploy to Remote Staging Host
-        if: ${{ secrets.STAGING_HOST != '' }}
+        if: env.STAGING_HOST != ''
         uses: appleboy/scp-action@master
         with:
-          host: ${{ secrets.STAGING_HOST }}
-          username: ${{ secrets.STAGING_USER }}
-          key: ${{ secrets.STAGING_SSH_KEY }}
+          host: ${{ env.STAGING_HOST }}
+          username: ${{ env.STAGING_USER }}
+          key: ${{ env.STAGING_SSH_KEY }}
           source: "."
           target: "/var/www/selene"
 
       # Trigger deployment hook or restart app server
       - name: Restart Gunicorn Server
-        if: ${{ secrets.STAGING_HOST != '' }}
+        if: env.STAGING_HOST != ''
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.STAGING_HOST }}
-          username: ${{ secrets.STAGING_USER }}
-          key: ${{ secrets.STAGING_SSH_KEY }}
+          host: ${{ env.STAGING_HOST }}
+          username: ${{ env.STAGING_USER }}
+          key: ${{ env.STAGING_SSH_KEY }}
           script: |
             cd /var/www/selene
             source venv/bin/activate
@@ -104,5 +108,6 @@ jobs:
             cd backend
             FLASK_APP=app.py flask db upgrade
             sudo systemctl restart selene
+
 
 
