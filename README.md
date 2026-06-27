@@ -1,79 +1,173 @@
-# Selene: Privacy-First Menstrual Health & Clinical Insights Platform
+<p align="center">
+  <img src="docs/banner.png" alt="Selene" width="100%" />
+</p>
 
-Selene is an enterprise-grade, privacy-first menstrual health and chronic physiological condition tracking platform. Designed for high-compliance environments, Selene combines zero-knowledge client-side encryption, clinical data interoperability, and machine learning cycle forecasting. The platform provides a secure bridge between patients tracking their reproductive health and healthcare providers needing interoperable, clinical-grade medical records.
+<h1 align="center">S E L E N E</h1>
+
+<p align="center">
+  <em>Named after the Greek goddess of the Moon, Selene is a privacy-first menstrual health platform<br/>where your most intimate data remains mathematically yours.</em>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/react-19-61DAFB?style=for-the-badge&logo=react&logoColor=black" />
+  <img src="https://img.shields.io/badge/flask-3.0-000000?style=for-the-badge&logo=flask&logoColor=white" />
+  <img src="https://img.shields.io/badge/postgresql-15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" />
+  <img src="https://img.shields.io/badge/redis-6+-DC382D?style=for-the-badge&logo=redis&logoColor=white" />
+</p>
+
+<p align="center">
+  <a href="#the-philosophy">Philosophy</a> &#183;
+  <a href="#architecture">Architecture</a> &#183;
+  <a href="#clinical-intelligence">Clinical Intelligence</a> &#183;
+  <a href="#getting-started">Getting Started</a> &#183;
+  <a href="#deployment">Deployment</a>
+</p>
 
 ---
 
-## Technical Architecture
+## The Philosophy
 
-### 1. Cryptographic Envelope Security Model
-To guarantee patient confidentiality, Selene utilizes a Zero-Knowledge envelope encryption architecture. All sensitive logging metrics and physiological data are encrypted on the client or during context-bound middleware before storage:
-* **Key Encryption Key (KEK) Derivation:** A user's personal PIN is processed client-side via PBKDF2-HMAC-SHA256 (100,000 iterations) to derive a 256-bit KEK.
-* **Double-Wrapped Data Encryption Key (DEK):** A unique symmetric AES-256 DEK is generated per-user in the client browser. The DEK is encrypted (wrapped) with the user's PIN-derived KEK before database storage.
-* **Database-Level Cryptography:** Custom SQLAlchemy TypeDecorator wrappers (including EncryptedString, EncryptedInt, EncryptedFloat, and EncryptedJSON) automatically encrypt and decrypt schema properties on-the-fly inside PostgreSQL using the user's session-decrypted DEK.
-* **PIN Verification:** Employs modern, GPU-resistant Argon2id (via argon2-cffi) for user PIN authentication.
+Most health tracking apps ask you to trust them with your body's data. Selene was designed around a different premise: **what if the server itself could never read your data?**
 
-```mermaid
-graph TD
-    PIN[User PIN] -->|PBKDF2 100k Iterations| KEK[Key Encryption Key]
-    Rand[Secure Random] -->|Generate| DEK[Data Encryption Key]
-    DEK -->|AES-256-CBC Encrypt| EncData[Encrypted JSON Payload]
-    KEK -->|AES-Key-Wrap| EncDEK[Encrypted DEK]
-    EncData -->|Store| DB[(PostgreSQL Database)]
-    EncDEK -->|Store| DB
+Every symptom log, temperature reading, and mood entry is encrypted with a key derived from your personal PIN, a key that never touches the server in its raw form. The database stores ciphertext. The backend processes ciphertext. If someone breaches the server, they find noise.
+
+This is not a feature. It is the foundation.
+
+---
+
+## Architecture
+
+### Zero-Knowledge Encryption Model
+
+Selene implements a layered envelope encryption scheme where the server is structurally prevented from accessing plaintext health data:
+
+```
+                          Client Browser
+            +-----------------------------------------+
+            |                                         |
+            |   PIN ──> PBKDF2 (100,000 iter) ──> KEK |
+            |                                         |
+            |   Random ──> DEK (AES-256)              |
+            |     |                                   |
+            |     +──> Encrypt(symptoms, moods, BBT)  |
+            |     +──> KEK wraps DEK                  |
+            |                                         |
+            +-----------------------------------------+
+                              |
+                        HTTPS (TLS 1.3)
+                              |
+            +-----------------------------------------+
+            |           Flask API Server              |
+            |                                         |
+            |   Receives: encrypted blobs only        |
+            |   Stores: ciphertext in PostgreSQL      |
+            |   Session: HttpOnly JWT in cookies      |
+            |   Revocation: Redis JTI blacklist       |
+            |                                         |
+            +-----------------------------------------+
 ```
 
-### 2. Clinical Data Models & Standardized Coding
-Selene is built from the ground up for clinical interoperability and compliance:
-* **HL7 FHIR Observations:** Data export pipelines generate clinical logs structured under the HL7 FHIR (Fast Healthcare Interoperability Resources) Observation standard.
-* **Standardized Medical Vocabularies:** All symptom logs map to international clinical terminologies:
-  - **LOINC** codes for physiological measurements (e.g., Basal Body Temperature).
-  - **SNOMED CT** concepts for tracking symptoms and chronic condition flags.
-* **Compliance Foundations:** Complete architectural mapping for Digital Personal Data Protection (DPDP) Act 2023 compliance, featuring cryptographic consent logging and secure audit trails.
+**Key Design Decisions:**
+- **PBKDF2-HMAC-SHA256** with 100,000 iterations for key derivation, resistant to GPU-accelerated brute force.
+- **Custom SQLAlchemy TypeDecorators** (`EncryptedString`, `EncryptedInt`, `EncryptedFloat`, `EncryptedJSON`) handle transparent encryption at the ORM layer.
+- **Argon2id** for PIN verification, the current winner of the Password Hashing Competition.
+- **Double-wrapped DEK**: encrypted once with PIN-derived KEK, once with a server-held recovery key, enabling secure PIN resets without data loss.
 
-### 3. Machine Learning & Signal Processing Pipeline
-* **Cycle Forecasting Regressor:** A gradient boosting regressor model trained to forecast cycle lengths using historical indicators, baseline statistics, and condition vectors.
-* **Uncertainty Bounds:** Estimates cycle forecasts with standard deviation error ranges to reflect statistical variance (e.g., predicted cycle: 28 days ± 1.5).
-* **Unsupervised Anomaly Detection:** An Isolation Forest model identifies multivariate outliers based on chronological reporting gaps and symptom intensity spikes.
-* **Clinical Insights Engine:** A rule-based heuristic classifier validating chronic condition indicators (PCOS, PMDD, Endometriosis) against literature benchmarks (ACOG, Rotterdam 2004 Criteria, DSM-5 PMDD Criteria).
+### Session Security
 
-### 4. Infrastructure & Defensive Engineering
-* **Secure Session Architecture:** Access tokens are stored in HttpOnly, SameSite=Strict cookies. Session revocation is enforced using a Redis-backed JTI (JWT ID) blacklist lookup.
-* **Rate Limiting:** Implements Flask-Limiter for secure endpoint protection against brute force authentication attempts.
-* **Production Deployment Wrapper:** Fully configured for Nginx reverse-proxy SSL termination and Gunicorn WSGI multi-worker environments.
+| Layer | Implementation |
+|:------|:---------------|
+| Token Storage | HttpOnly, SameSite=Strict, Secure cookies |
+| Token Revocation | Redis-backed JTI blacklist with TTL expiry |
+| CSRF Protection | Double-submit cookie pattern on all mutating endpoints |
+| Rate Limiting | Flask-Limiter with sliding window counters |
+| Content Security | Strict CSP headers, HSTS, X-Frame-Options: DENY |
 
 ---
 
-## Directory Structure
+## Clinical Intelligence
+
+### Cycle Prediction Engine
+
+Selene combines a trained **Gradient Boosting Regressor** with mathematical fallback heuristics:
+
+| Component | Detail |
+|:----------|:-------|
+| Primary Model | scikit-learn GBR trained on 12,000 samples (R^2 = 0.66) |
+| Feature Vector | `[cycle_baseline, period_baseline, has_pcos, has_pmdd, has_endo, avg_sleep, avg_pain]` |
+| Uncertainty | Dynamic standard deviation bounds reported with every prediction |
+| Fallback | Weighted linear regression over historical period start dates |
+| Conditions | PCOS, PMDD, and Endometriosis flags influence prediction with clinical disclaimers |
+
+### Anomaly Detection
+
+An **Isolation Forest** model monitors for irregular patterns across two dimensions:
+- **Symptom intensity spikes** (aggregated mood + symptom + pain scores)
+- **Logging frequency gaps** (days between consecutive entries)
+
+Outliers are surfaced with contextual explanations ("Symptom score spike detected" vs. "Logging gap anomaly detected").
+
+### Insights Engine
+
+A deterministic rule-based engine evaluates daily logs against published clinical criteria:
+
+| Condition | Standard | Method |
+|:----------|:---------|:-------|
+| PCOS Risk | Rotterdam 2004 Criteria | Cycle irregularity + symptom pattern analysis |
+| PMDD Risk | DSM-5 Criteria | Luteal phase mood severity tracking |
+| Endometriosis Flags | ACOG Guidelines | Pain pattern correlation with cycle phase |
+| Ovulation Detection | Su et al. 2017 | Biphasic BBT thermal shift calculation |
+
+### Data Interoperability
+
+Health exports are generated in two clinical formats:
+- **HL7 FHIR Observations** with LOINC and SNOMED CT coding for direct EHR integration
+- **Password-encrypted PDF reports** formatted for OB/GYN consultations
+
+---
+
+## Project Structure
 
 ```
 selene/
-├── .github/workflows/      # CI/CD GitHub Actions configurations
-├── backend/
-│   ├── backups/            # Database backups folder
-│   ├── dataset/            # Training datasets for ML model
-│   ├── migrations/         # Flask-Migrate database migrations
-│   ├── app.py              # Flask Application factory
-│   ├── auth.py             # Authentication and JWT validation
-│   ├── config.py           # Configuration parameters
-│   ├── gunicorn.conf.py    # Gunicorn WSGI configuration
-│   ├── insights_engine.py  # Rule-based clinical insights engine
-│   ├── models.py           # SQLAlchemy database schemas & crypto decorators
-│   ├── pipeline.py         # ML data preprocessing pipelines
-│   ├── predict.py          # ML inference endpoints and fallbacks
-│   ├── run_prod.sh         # Production shell startup script
-│   └── test_backend.py     # Backend unit and integration test suite
-├── frontend/
-│   ├── public/             # Static public assets
-│   ├── src/
-│   │   ├── components/     # React presentation and dashboard components
-│   │   ├── utils/          # Client-side cryptography and API utilities
-│   │   ├── App.jsx         # React application root
-│   │   └── main.jsx        # Frontend entry point
-│   ├── package.json        # Frontend dependencies
-│   └── vite.config.js      # Vite build tool configuration
-└── nginx/
-    └── selene.conf         # Production Nginx reverse-proxy configuration
+|
++-- backend/
+|   +-- app.py                 # Flask application factory
+|   +-- auth.py                # Authentication, JWT, key management
+|   +-- models.py              # SQLAlchemy schemas + crypto type decorators
+|   +-- insights_engine.py     # Clinical heuristic analysis engine
+|   +-- predict.py             # ML inference + anomaly detection endpoints
+|   +-- pipeline.py            # Feature engineering pipeline
+|   +-- logs.py                # Daily log CRUD, FHIR export, PDF generation
+|   +-- public_health.py       # K-anonymous aggregate health statistics
+|   +-- gunicorn.conf.py       # Production WSGI configuration
+|   +-- train_model.py         # Model training script
+|   +-- test_backend.py        # 29-case integration test suite
+|   +-- requirements.txt       # Python dependencies
+|   `-- run_prod.sh            # Production startup script
+|
++-- frontend/
+|   +-- src/
+|   |   +-- components/        # 24 React components
+|   |   +-- utils/crypto.js    # Client-side PBKDF2 key derivation
+|   |   +-- App.jsx            # Application root + routing
+|   |   `-- main.jsx           # Entry point
+|   +-- package.json           # Node dependencies
+|   `-- vite.config.js         # Build configuration
+|
++-- nginx/
+|   `-- selene.conf            # Production reverse proxy + SSL config
+|
++-- docs/                      # Supplementary documentation
+|   +-- audit.md               # Production readiness checklist
+|   +-- data_flow_mapping.md   # Encryption data flow diagrams
+|   +-- ml.md                  # ML pipeline documentation
+|   +-- irb_proposal.md        # IRB ethics proposal
+|   `-- pitch_deck.md          # Investor pitch materials
+|
+`-- .github/workflows/
+    `-- staging_deploy.yml     # CI/CD: test, build, deploy pipeline
 ```
 
 ---
@@ -81,66 +175,83 @@ selene/
 ## Getting Started
 
 ### Prerequisites
-* Python 3.11+
-* Node.js 20.19+ or 22.12+
-* PostgreSQL 15+
-* Redis Server 6+
 
-### Backend Setup
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-2. Create and activate a Python virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Create a `.env` configuration file based on `.env.example` and set up database/Redis credentials.
-5. Initialize the database schema and apply migrations:
-   ```bash
-   flask db upgrade
-   ```
-6. Run the integration and unit tests:
-   ```bash
-   pytest
-   ```
+| Dependency | Version |
+|:-----------|:--------|
+| Python | 3.11+ |
+| Node.js | 20.19+ or 22.12+ |
+| PostgreSQL | 15+ |
+| Redis | 6+ |
 
-### Frontend Setup
-1. Navigate to the frontend directory:
-   ```bash
-   cd ../frontend
-   ```
-2. Install Node packages:
-   ```bash
-   npm install
-   ```
-3. Run the frontend development server:
-   ```bash
-   npm run dev
-   ```
+### Backend
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate          # Windows: .\venv\Scripts\activate
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env              # Edit with your database and Redis credentials
+
+# Initialize database
+flask db upgrade
+
+# Run tests (29 integration tests)
+pytest
+
+# Start development server
+flask run
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev                       # Starts on http://localhost:5173
+```
 
 ---
 
-## Production Deployment
+## Deployment
 
-### 1. Build Frontend Static Assets
+Selene ships with production-ready configurations for Nginx + Gunicorn deployments.
+
+### 1. Build Frontend
+
 ```bash
-cd frontend
-npm run build
+cd frontend && npm run build
+# Transfer dist/ to your web server root
 ```
-Transfer the generated `frontend/dist/` assets folder to your production web directory (e.g., `/var/www/selene/dist`).
 
-### 2. Configure Gunicorn WSGI
-Use the provided production shell script to automatically run database migrations, clean expired tokens, and start Gunicorn:
+### 2. Start Backend with Gunicorn
+
 ```bash
 chmod +x backend/run_prod.sh
 ./backend/run_prod.sh
+# Runs migrations, cleans expired tokens, starts Gunicorn workers
 ```
 
-### 3. Setup Nginx Reverse Proxy
-Place the configuration file `nginx/selene.conf` into `/etc/nginx/sites-available/selene`. Ensure the static root points to your compiled frontend folder and setup SSL termination using Certbot.
+### 3. Configure Nginx
+
+Place `nginx/selene.conf` in `/etc/nginx/sites-available/` and provision SSL certificates:
+
+```bash
+sudo certbot --nginx -d yourdomain.com
+sudo systemctl restart nginx
+```
+
+### CI/CD
+
+Every push to `main` or `staging` triggers a GitHub Actions pipeline that:
+1. Spins up a PostgreSQL 15 service container
+2. Installs dependencies and runs the full 29-test backend suite
+3. Builds production frontend assets with Vite
+4. Deploys to staging via SCP (when SSH secrets are configured)
+
+---
+
+<p align="center">
+  <sub>Built with conviction that privacy is not a feature to be toggled, but a right to be architected.</sub>
+</p>
