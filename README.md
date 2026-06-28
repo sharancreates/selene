@@ -19,6 +19,7 @@
 <p align="center">
   <a href="#the-philosophy">Philosophy</a> &#183;
   <a href="#architecture">Architecture</a> &#183;
+  <a href="#application-flow">App Flow</a> &#183;
   <a href="#clinical-intelligence">Clinical Intelligence</a> &#183;
   <a href="#getting-started">Getting Started</a> &#183;
   <a href="#deployment">Deployment</a>
@@ -86,7 +87,68 @@ Selene implements a layered envelope encryption scheme where the server is struc
 
 ---
 
+## Application Flow
+
+The user journey through Selene is designed around progressive trust. Each layer reveals more functionality only after the previous layer has been secured.
+
+```mermaid
+flowchart TD
+    A["Landing Page"] -->|"Create Account"| B["Registration"]
+    A -->|"Sign In"| C["Login"]
+
+    B -->|"Generate DEK + KEK\nAccept Terms & Conditions"| D["Onboarding"]
+    C -->|"Derive KEK from PIN\nUnwrap DEK"| E{"Camouflage\nEnabled?"}
+
+    E -->|"Yes"| F["Calculator Guard\n(Functional Calculator UI)"]
+    E -->|"No"| G["Dashboard"]
+
+    F -->|"Enter correct PIN"| G
+
+    D -->|"Set health baseline\nCycle length, conditions"| G
+
+    G -->|"Log symptoms, moods,\nBBT, sleep, pain"| H["Daily Health Logger"]
+    G -->|"View predictions &\ninsights"| I["Cycle Predictions\n& Pattern Insights"]
+    G -->|"View charts"| J["BBT Trend Chart\n& Alerts Panel"]
+
+    G -->|"Navigate"| K["Calendar View"]
+    G -->|"Navigate"| L["Settings"]
+    G -->|"Navigate"| M["Public Health Stats"]
+
+    K -->|"Select any date"| H
+
+    L -->|"Export"| N["FHIR JSON Export"]
+    L -->|"Export"| O["Encrypted PDF Report"]
+    L -->|"Security"| P["PIN Reset via\nRecovery Key"]
+    L -->|"Toggle"| Q["Camouflage Mode\nConfiguration"]
+
+    M -->|"K-Anonymous\nAggregate Data"| R["Community\nWellness Metrics"]
+
+    style A fill:#2d2d3f,stroke:#8b7ec8,color:#e8e4f0
+    style G fill:#3a2f4a,stroke:#c49b6d,color:#f0e6d8
+    style F fill:#4a3040,stroke:#df9b6d,color:#f0e6d8
+    style I fill:#2d3f2d,stroke:#8ba68b,color:#e0f0e0
+    style N fill:#2d3a4f,stroke:#6b9ec8,color:#d8e8f0
+    style O fill:#2d3a4f,stroke:#6b9ec8,color:#d8e8f0
+```
+
+### Screen Descriptions
+
+| Screen | Purpose | Key Technical Detail |
+|:-------|:--------|:---------------------|
+| **Landing** | Marketing page with hero, value proposition, and camouflage demo | Static, no authentication required |
+| **Registration** | Account creation with PIN setup and Terms & Conditions consent | Client-side DEK generation + KEK wrapping via PBKDF2 |
+| **Login** | PIN-based authentication | KEK derived from PIN, DEK unwrapped, stored in session |
+| **Calculator Guard** | Functional arithmetic calculator that disguises the app | Real math evaluation engine; correct PIN sequence unlocks the dashboard |
+| **Onboarding** | First-time health baseline configuration | Collects cycle length, period duration, chronic condition flags |
+| **Dashboard** | Central hub: daily logger, predictions, BBT chart, alerts | All displayed data is decrypted on-the-fly from encrypted database columns |
+| **Calendar View** | Month-by-month log history with day-level detail | Click any date to view or edit that day's health entry |
+| **Settings** | Account management, data exports, camouflage toggle, PIN reset | FHIR export, PDF generation, recovery key rotation |
+| **Public Health** | Anonymous community wellness statistics | K-anonymity (K >= 5) enforced to prevent cohort re-identification |
+
+---
+
 ## Clinical Intelligence
+
 
 ### Cycle Prediction Engine
 
