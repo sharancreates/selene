@@ -157,10 +157,10 @@ Selene combines a trained **Gradient Boosting Regressor** with mathematical fall
 | Component | Detail |
 |:----------|:-------|
 | Primary Model | scikit-learn GBR trained on 12,000 samples (R^2 = 0.66) |
-| Feature Vector | `[cycle_baseline, period_baseline, has_pcos, has_pmdd, has_endo, avg_sleep, avg_pain]` |
+| Feature Vector | `[cycle_baseline, period_baseline, has_PMOS, has_pmdd, has_endo, avg_sleep, avg_pain]` |
 | Uncertainty | Dynamic standard deviation bounds reported with every prediction |
 | Fallback | Weighted linear regression over historical period start dates |
-| Conditions | PCOS, PMDD, and Endometriosis flags influence prediction with clinical disclaimers |
+| Conditions | PMOS, PMDD, and Endometriosis flags influence prediction with clinical disclaimers |
 
 ### Anomaly Detection
 
@@ -176,7 +176,7 @@ A deterministic rule-based engine evaluates daily logs against published clinica
 
 | Condition | Standard | Method |
 |:----------|:---------|:-------|
-| PCOS Risk | Rotterdam 2004 Criteria | Cycle irregularity + symptom pattern analysis |
+| PMOS Risk | Rotterdam 2004 Criteria | Cycle irregularity + symptom pattern analysis |
 | PMDD Risk | DSM-5 Criteria | Luteal phase mood severity tracking |
 | Endometriosis Flags | ACOG Guidelines | Pain pattern correlation with cycle phase |
 | Ovulation Detection | Su et al. 2017 | Biphasic BBT thermal shift calculation |
@@ -248,6 +248,7 @@ selene/
 ### Backend
 
 ```bash
+git clone https://github.com/sharancreates/selene.git
 cd backend
 python -m venv venv
 source venv/bin/activate          # Windows: .\venv\Scripts\activate
