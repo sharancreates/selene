@@ -179,22 +179,6 @@ function getFallbackDaysUntilNextCycle(dateStr, logs, user) {
   return remaining > 0 ? remaining : cycleLength;
 }
 
-function DashboardSkeleton() {
-  return (
-    <div className="w-full max-w-5xl mx-auto px-6 py-10 flex flex-col gap-10 animate-pulse">
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
-        <div className="md:col-span-5 h-56 bg-black/5 rounded-[3rem]" />
-        <div className="md:col-span-7 h-56 bg-black/5 rounded-[3rem]" />
-      </div>
-      <div className="h-40 bg-black/5 rounded-[2.5rem]" />
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-10">
-        <div className="md:col-span-4 h-96 bg-black/5 rounded-[3rem]" />
-        <div className="md:col-span-8 h-96 bg-black/5 rounded-[3.5rem]" />
-      </div>
-    </div>
-  );
-}
-
 export default function Dashboard({ username = 'user', setView, token, user, onLogout, selectedDate, setSelectedDate, showToast }) {
   const [activePhase, setActivePhase] = useState('menstrual');
   const [allLogs, setAllLogs] = useState([]);
