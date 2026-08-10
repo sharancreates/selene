@@ -1016,6 +1016,24 @@ class SeleneBackendTestCase(unittest.TestCase):
             if os.path.exists(self.model_path):
                 os.rename(self.model_path, self.model_temp_path)
 
+    def test_get_model_info(self):
+        """
+        Tests retrieving ML model versioning and evaluation metrics metadata.
+        """
+        register_payload = {"username": "infouser", "pin": "123456"}
+        res = self.client.post('/api/auth/register', json=register_payload)
+        self.assertEqual(res.status_code, 201)
+        
+        token = res.get_json()['token']
+        headers = {'Authorization': f'Bearer {token}'}
+        
+        res_info = self.client.get('/api/predict/model-info', headers=headers)
+        self.assertEqual(res_info.status_code, 200)
+        data = res_info.get_json()
+        self.assertEqual(data['status'], 'active')
+        self.assertIn('metrics', data)
+        self.assertIn('r2', data['metrics'])
+
     def test_isolation_forest_anomaly_detection(self):
         """
         Tests that Isolation Forest anomaly detection returns successful response

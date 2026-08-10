@@ -40,6 +40,55 @@ def handle_pipeline_error(error):
 
 # Absolute path for the compiled ML model binary
 MODEL_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'selene_model.joblib')
+METRICS_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'model_metrics.json')
+
+# In-memory model cache variables
+_cached_model = None
+_cached_model_mtime = None
+
+def get_loaded_model():
+    """
+    Returns the cached scikit-learn model object, automatically reloading from disk 
+    only if selene_model.joblib has been updated/modified.
+    """
+    global _cached_model, _cached_model_mtime
+    if not os.path.exists(MODEL_PATH):
+        return None
+    try:
+        current_mtime = os.path.getmtime(MODEL_PATH)
+        if _cached_model is None or _cached_model_mtime != current_mtime:
+            _cached_model = joblib.load(MODEL_PATH)
+            _cached_model_mtime = current_mtime
+        return _cached_model
+    except Exception as err:
+        logger.warning(f"Failed to load cached ML model from {MODEL_PATH}: {err}")
+        return None
+
+
+@predict_bp.route('/model-info', methods=['GET'])
+@jwt_required
+def get_model_info():
+    """
+    Exposes ML model versioning metadata, evaluation metrics, and feature architecture.
+    """
+    import json
+    if not os.path.exists(METRICS_PATH):
+        return jsonify({
+            "status": "uncalibrated",
+            "message": "No serialized model metrics metadata found."
+        }), 404
+        
+    try:
+        with open(METRICS_PATH, 'r') as f:
+            metrics = json.load(f)
+        return jsonify({
+            "status": "active",
+            "model_path": MODEL_PATH,
+            "metrics": metrics
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to load model metrics: {str(e)}"}), 500
+
 
 @predict_bp.route('/next-cycle', methods=['GET'])
 @jwt_required
@@ -77,23 +126,19 @@ def predict_next_cycle():
         else:
             reference_date = datetime.now().date()
 
-        # 3. Model Inference Check: Try to load serialized scikit-learn binary
+        # 3. Model Inference Check: Use in-memory cached scikit-learn binary
         predicted_cycle_length = None
-        if os.path.exists(MODEL_PATH):
+        model = get_loaded_model()
+        if model is not None:
             try:
-                # Load joblib binary model
-                model = joblib.load(MODEL_PATH)
-                
                 # Construct feature vector matching model's expected shape:
-                # [cycle_baseline, period_baseline, has_pcos, has_pmdd, has_endo, avg_sleep, avg_pain]
+                # [cycle_baseline, period_baseline, has_pcos, has_pmdd, has_endo]
                 features = np.array([[
                     user.cycle_length_baseline,
                     user.period_length_baseline,
                     int(user.has_pcos),
                     int(user.has_pmdd),
-                    int(user.has_endo),
-                    df['sleep_quality'].mean(),
-                    df['pelvic_pain'].mean()
+                    int(user.has_endo)
                 ]])
                 
                 # Execute scikit-learn prediction
@@ -245,7 +290,7 @@ def get_insights():
 def submit_feedback():
     """
     Records user validation feedback and rating for a cycle prediction.
-    """
+    """ 
     from models import PredictionFeedback
     
     data = request.get_json() or {}
@@ -298,6 +343,8 @@ def submit_feedback():
         raise MLPipelineError(f"Failed to save feedback: {str(e)}", 500)
 
 
+_anomaly_cache = {}
+
 @predict_bp.route('/anomalies', methods=['GET'])
 @jwt_required
 def detect_anomalies():
@@ -317,43 +364,52 @@ def detect_anomalies():
                 "medical_disclaimer": "MEDICAL DISCLAIMER: Selene anomaly detection is not diagnostic advice."
             }), 200
             
-        # 1. Compute symptom index counts per log day
-        symptom_counts = []
-        for i in range(len(df)):
-            count = 0.0
-            # Sum dynamic mood counts
-            count += sum(df.loc[i, col] for col in df.columns if col.startswith('mood_'))
-            count += sum(df.loc[i, col] for col in df.columns if col.startswith('symptom_'))
-            # Scale pelvic and back pain (0-100) to match count variance
-            count += (df.loc[i, 'pelvic_pain'] or 0) / 10.0
-            count += (df.loc[i, 'back_pain'] or 0) / 10.0
-            symptom_counts.append(count)
-            
-        # 2. Compute chronological logging gaps
-        logging_gaps = [0.0]
-        for i in range(1, len(df)):
-            gap = float((df.loc[i, 'log_date'] - df.loc[i-1, 'log_date']).days)
-            logging_gaps.append(gap)
-            
-        features = np.column_stack((symptom_counts, logging_gaps))
-        
-        # 3. Fit Isolation Forest to detect multivariate outliers
-        clf = IsolationForest(contamination=0.1, random_state=42)
-        preds = clf.fit_predict(features)
-        
-        anomalies = []
-        for i in range(len(df)):
-            if preds[i] == -1:
-                reason = "Logging frequency gap anomaly detected."
-                if symptom_counts[i] > np.median(symptom_counts):
-                    reason = "Symptom score spike anomaly detected."
-                anomalies.append({
-                    "date": df.loc[i, 'log_date'].date().isoformat(),
-                    "symptom_index": float(round(symptom_counts[i], 1)),
-                    "logging_gap_days": int(logging_gaps[i]),
-                    "reason": reason
-                })
+        last_log_str = df['log_date'].iloc[-1].isoformat()
+        cache_key = (g.user.id, len(df), last_log_str)
+        if cache_key in _anomaly_cache:
+            anomalies = _anomaly_cache[cache_key]
+        else:
+            # 1. Compute symptom index counts per log day
+            symptom_counts = []
+            for i in range(len(df)):
+                count = 0.0
+                # Sum dynamic mood counts
+                count += sum(df.loc[i, col] for col in df.columns if col.startswith('mood_'))
+                count += sum(df.loc[i, col] for col in df.columns if col.startswith('symptom_'))
+                # Scale pelvic and back pain (0-100) to match count variance
+                count += (df.loc[i, 'pelvic_pain'] or 0) / 10.0
+                count += (df.loc[i, 'back_pain'] or 0) / 10.0
+                symptom_counts.append(count)
                 
+            # 2. Compute chronological logging gaps
+            logging_gaps = [0.0]
+            for i in range(1, len(df)):
+                gap = float((df.loc[i, 'log_date'] - df.loc[i-1, 'log_date']).days)
+                logging_gaps.append(gap)
+                
+            features = np.column_stack((symptom_counts, logging_gaps))
+            
+            # 3. Fit Isolation Forest to detect multivariate outliers
+            clf = IsolationForest(contamination=0.1, random_state=42)
+            preds = clf.fit_predict(features)
+            
+            anomalies = []
+            for i in range(len(df)):
+                if preds[i] == -1:
+                    reason = "Logging frequency gap anomaly detected."
+                    if symptom_counts[i] > np.median(symptom_counts):
+                        reason = "Symptom score spike anomaly detected."
+                    anomalies.append({
+                        "date": df.loc[i, 'log_date'].date().isoformat(),
+                        "symptom_index": float(round(symptom_counts[i], 1)),
+                        "logging_gap_days": int(logging_gaps[i]),
+                        "reason": reason
+                    })
+            
+            if len(_anomaly_cache) > 500:
+                _anomaly_cache.clear()
+            _anomaly_cache[cache_key] = anomalies
+                    
         disclaimer_text = "MEDICAL DISCLAIMER: Selene anomaly detection is based on mathematical models and is not diagnostic advice."
         return jsonify({
             "status": "success",

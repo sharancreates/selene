@@ -383,47 +383,16 @@ class DailyLog(db.Model):
         self.update_encrypted_data('lifestyle_actions', val)
 
     def to_dict(self):
-        """Helper method to serialize a daily log entry with legacy read fallbacks."""
-        flow = self.flow_intensity
-        pelvic = self.pelvic_pain
-        back = self.back_pain
-        energy = self.energy_level
-
-        tags = self.symptom_tags or {}
-        
-        if self.phase == 'follicular':
-            if 'focus' in tags:
-                flow = tags['focus']
-            if 'strength' in tags:
-                pelvic = tags['strength']
-            if 'glow' in tags:
-                back = tags['glow']
-        elif self.phase == 'ovulatory':
-            if 'libido' in tags:
-                flow = tags['libido']
-            if 'confidence' in tags:
-                pelvic = tags['confidence']
-            if 'bloating' in tags:
-                back = tags['bloating']
-        elif self.phase == 'luteal':
-            if 'bloating' in tags:
-                flow = tags['bloating']
-            if 'breastSensitivity' in tags:
-                pelvic = tags['breastSensitivity']
-            if 'anxiety' in tags:
-                energy = tags['anxiety']
-            if 'cravings' in tags:
-                back = tags['cravings']
-
+        """Helper method to serialize a daily log entry with consistent property mappings."""
         return {
             "id": self.id,
             "user_id": self.user_id,
             "log_date": self.log_date.isoformat() if isinstance(self.log_date, date) else self.log_date,
             "phase": self.phase,
-            "energy_level": energy,
-            "pelvic_pain": pelvic,
-            "flow_intensity": flow,
-            "back_pain": back,
+            "energy_level": self.energy_level,
+            "pelvic_pain": self.pelvic_pain,
+            "flow_intensity": self.flow_intensity,
+            "back_pain": self.back_pain,
             "sleep_quality": self.sleep_quality,
             "basal_body_temp": self.basal_body_temp,
             "mood_toggles": self.mood_toggles,

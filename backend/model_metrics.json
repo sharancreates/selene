@@ -1,6 +1,17 @@
 {
-  "mse": 6.644788426596447,
-  "rmse": 2.5777487128493437,
-  "r2": 0.6635620872197344,
-  "num_samples": 12000
+  "mse": 2.2984,
+  "rmse": 1.516,
+  "r2": 0.8542,
+  "num_samples": 1642,
+  "num_train_clients": 124,
+  "num_test_clients": 32,
+  "features": [
+    "cycle_baseline",
+    "period_baseline",
+    "has_pcos",
+    "has_pmdd",
+    "has_endo"
+  ],
+  "model_type": "GradientBoostingRegressor",
+  "split_method": "GroupShuffleSplit (ClientID)"
 }

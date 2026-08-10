@@ -415,8 +415,12 @@ def login():
         
         # Migrate legacy daily logs to new DEK
         try:
-            g.user_encryption_key = "p_Mh8N-YsKDORo4aEg5zYf51CJ8KD0qkmMDEOdrCVo4="
-            user_logs = user.logs
+            legacy_dek = current_app.config.get('LEGACY_DEK_KEY') or os.environ.get('LEGACY_DEK_KEY')
+            if not legacy_dek:
+                current_app.logger.warning("LEGACY_DEK_KEY is not configured in environment or config. Skipping legacy log migration.")
+            else:
+                g.user_encryption_key = legacy_dek
+                user_logs = user.logs
             
             logs_data = []
             for log in user_logs:

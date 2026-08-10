@@ -156,8 +156,8 @@ Selene combines a trained **Gradient Boosting Regressor** with mathematical fall
 
 | Component | Detail |
 |:----------|:-------|
-| Primary Model | scikit-learn GBR trained on 12,000 samples (R^2 = 0.66) |
-| Feature Vector | `[cycle_baseline, period_baseline, has_pcos, has_pmdd, has_endo, avg_sleep, avg_pain]` |
+| Primary Model | scikit-learn GBR trained on Marquette NFP Dataset with GroupShuffleSplit (R² = 0.85, RMSE = 1.52 days) |
+| Feature Vector | `[cycle_baseline, period_baseline, has_pcos, has_pmdd, has_endo]` |
 | Uncertainty | Dynamic standard deviation bounds reported with every prediction |
 | Fallback | Weighted linear regression over historical period start dates |
 | Conditions | PCOS, PMDD, and Endometriosis flags influence prediction with clinical disclaimers |
