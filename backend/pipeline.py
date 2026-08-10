@@ -71,12 +71,10 @@ def extract_log_dataframe(user_id):
         
         # Impute missing Basal Body Temperature values (vitals check)
         if 'basal_body_temp' in df.columns:
-            # 1. Forward-fill (propagate last known temperature)
-            df['basal_body_temp'] = df['basal_body_temp'].ffill()
-            # 2. Backward-fill (for leading missing values)
-            df['basal_body_temp'] = df['basal_body_temp'].bfill()
-            # 3. Final default fallback (98.0°F baseline)
-            df['basal_body_temp'] = df['basal_body_temp'].fillna(98.0)
+            # Cast to numeric float to ensure proper dtype
+            df['basal_body_temp'] = pd.to_numeric(df['basal_body_temp'], errors='coerce')
+            # 1. Forward-fill, 2. Backward-fill, 3. Default 98.0°F fallback
+            df['basal_body_temp'] = df['basal_body_temp'].ffill().bfill().fillna(98.0)
         else:
             df['basal_body_temp'] = 98.0
 

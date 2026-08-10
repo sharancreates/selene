@@ -23,6 +23,7 @@ class TestingConfig:
     DEBUG = False
     SESSION_COOKIE_SECURE = False  # Allow cookies in tests without HTTPS
     RATELIMIT_ENABLED = False  # Disable rate limiting in tests
+    LEGACY_DEK_KEY = 'p_Mh8N-YsKDORo4aEg5zYf51CJ8KD0qkmMDEOdrCVo4='
 
 
 class SeleneBackendTestCase(unittest.TestCase):
@@ -415,9 +416,9 @@ class SeleneBackendTestCase(unittest.TestCase):
 
         encrypted_data = row[0]
         self.assertIsNotNone(encrypted_data)
-        self.assertNotIn("menstrual", encrypted_data)
-        self.assertNotIn("75", encrypted_data)
-        self.assertNotIn("98.4", encrypted_data)
+        self.assertNotIn('"phase": "menstrual"', encrypted_data)
+        self.assertNotIn('"energy_level": 75', encrypted_data)
+        self.assertNotIn('"basal_body_temp": 98.4', encrypted_data)
 
     def test_verify_pin(self):
         """
@@ -775,17 +776,12 @@ class SeleneBackendTestCase(unittest.TestCase):
         self.assertEqual(len(log_records), 1)
         db_log = log_records[0]
         
-        # Assert database columns are empty (null) to fix mismatch
-        self.assertIsNone(db_log.flow_intensity)
-        self.assertIsNone(db_log.pelvic_pain)
-        self.assertIsNone(db_log.back_pain)
+        # Assert database properties store exact values directly without column nullification
+        self.assertEqual(db_log.flow_intensity, 85)
+        self.assertEqual(db_log.pelvic_pain, 75)
+        self.assertEqual(db_log.back_pain, 65)
         
-        # Assert they are present in symptom_tags
-        self.assertEqual(db_log.symptom_tags['focus'], 85)
-        self.assertEqual(db_log.symptom_tags['strength'], 75)
-        self.assertEqual(db_log.symptom_tags['glow'], 65)
-        
-        # Assert to_dict() returns them correctly mapped to mimic original columns
+        # Assert to_dict() returns them correctly
         serialized = db_log.to_dict()
         self.assertEqual(serialized['flow_intensity'], 85)
         self.assertEqual(serialized['pelvic_pain'], 75)

@@ -100,41 +100,6 @@ def sync_log():
     symptom_tags = sanitize_value(symptom_tags)
     lifestyle_actions = sanitize_value(lifestyle_actions)
 
-    # Map non-menstrual phase sliders to symptom_tags to fix semantic column mismatch
-    if phase == 'follicular':
-        if flow is not None:
-            symptom_tags['focus'] = flow
-            flow = None
-        if pelvic is not None:
-            symptom_tags['strength'] = pelvic
-            pelvic = None
-        if back is not None:
-            symptom_tags['glow'] = back
-            back = None
-    elif phase == 'ovulatory':
-        if flow is not None:
-            symptom_tags['libido'] = flow
-            flow = None
-        if pelvic is not None:
-            symptom_tags['confidence'] = pelvic
-            pelvic = None
-        if back is not None:
-            symptom_tags['bloating'] = back
-            back = None
-    elif phase == 'luteal':
-        if flow is not None:
-            symptom_tags['bloating'] = flow
-            flow = None
-        if pelvic is not None:
-            symptom_tags['breastSensitivity'] = pelvic
-            pelvic = None
-        if energy is not None:
-            symptom_tags['anxiety'] = energy
-            energy = None
-        if back is not None:
-            symptom_tags['cravings'] = back
-            back = None
-
     # 3. Perform atomic transaction upsert
     try:
         # Check if record exists for this user and date
