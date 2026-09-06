@@ -219,3 +219,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Environment variables and local secrets
+.env
+.env.local
+.env.*.local
+*.env
+backend/.env
+frontend/.env
+backend/.env.*
+

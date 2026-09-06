@@ -388,6 +388,7 @@ class DailyLog(db.Model):
             "id": self.id,
             "user_id": self.user_id,
             "log_date": self.log_date.isoformat() if isinstance(self.log_date, date) else self.log_date,
+            "encrypted_data": self.encrypted_data,
             "phase": self.phase,
             "energy_level": self.energy_level,
             "pelvic_pain": self.pelvic_pain,

@@ -23,17 +23,20 @@ def generate_insights(user):
     
     # 1. Check for insufficient data safeguard threshold
     if len(logs) < 7:
+        remaining = 7 - len(logs)
         return {
             "insights": [
                 {
                     "title": "Insight Engine Calibrating",
-                    "message": f"Selene is calibrating. You have logged {len(logs)} days. Please log at least 7 days of symptoms to unlock personalized hormonal insights.",
+                    "message": f"Selene is calibrating ({len(logs)} of 7 total entries logged). Log {remaining} more day{'s' if remaining > 1 else ''} to unlock your personalized hormonal insights.",
                     "category": "cycle",
                     "confidence": "low",
-                    "explanation": "Selene requires a minimum baseline of 7 logged days to detect trends or physiological shifts.",
+                    "explanation": f"Selene requires a cumulative baseline of 7 total logged days to detect biological trends and hormonal patterns. You currently have {len(logs)} total entries recorded in your account history.",
                     "supporting_data": {
                         "status": "insufficient_data",
-                        "days_logged": len(logs)
+                        "days_logged": len(logs),
+                        "days_needed": 7,
+                        "days_remaining": remaining
                     }
                 }
             ]

@@ -23,6 +23,8 @@ const getCookie = (name) => {
   return '';
 };
 
+let inFlightSessionCheck = null;
+
 function App() {
   const getInitialView = () => {
     const path = window.location.pathname;
@@ -32,7 +34,7 @@ function App() {
     if (path === '/calendar') return 'calendar';
     if (path === '/settings') return 'settings';
     if (path === '/public-health') return 'public-health';
-    return 'landing';
+    return localStorage.getItem('selene_logged_in') === 'true' ? 'dashboard' : 'landing';
   };
 
   const [view, setViewInternal] = useState(getInitialView);
@@ -55,11 +57,19 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [toast]);
-  const [token, setToken] = useState('');
-  const [user, setUser] = useState(null);
-  const [username, setUsername] = useState('user');
+  const [token, setToken] = useState(() => localStorage.getItem('selene_token') || '');
+  const [user, setUser] = useState(() => {
+    try {
+      const savedUser = localStorage.getItem('selene_user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [username, setUsername] = useState(() => localStorage.getItem('selene_username') || 'user');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [isUnlocked, setIsUnlocked] = useState(() => {
+    if (sessionStorage.getItem('selene_unlocked') === 'true') return true;
     const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
     const loggedIn = localStorage.getItem('selene_logged_in') === 'true';
     return !loggedIn || !camo;
@@ -97,7 +107,12 @@ function App() {
     setUser(null);
     setIsUnlocked(true);
     localStorage.removeItem('selene_logged_in');
+    localStorage.removeItem('selene_token');
+    localStorage.removeItem('selene_user');
+    localStorage.removeItem('selene_username');
     sessionStorage.removeItem('selene_session_key');
+    sessionStorage.removeItem('selene_dek');
+    sessionStorage.removeItem('selene_unlocked');
     window.history.replaceState({}, '', '/');
     setViewInternal('landing');
   };
@@ -105,42 +120,74 @@ function App() {
   const checkSession = async () => {
     // Never run during an active login/register to avoid race conditions
     if (isAuthenticating.current) return;
-    try {
-      const response = await fetch('/api/auth/refresh', {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': getCookie('csrf_token') },
-        credentials: 'include'
-      });
-      // Bail if login/register happened while we were waiting
-      if (isAuthenticating.current) return;
-      const data = await response.json();
-      if (response.ok) {
-        setToken(data.token);
-        setUser(data.user);
-        setUsername(data.user.username);
-        localStorage.setItem('selene_logged_in', 'true');
-        const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
-        setIsUnlocked(!camo);
-        // Restore the correct view for the current URL
-        const path = window.location.pathname;
-        const viewMap = { '/dashboard': 'dashboard', '/calendar': 'calendar', '/settings': 'settings', '/public-health': 'public-health' };
-        if (viewMap[path]) setViewInternal(viewMap[path]);
-      } else {
-        const wasLoggedIn = localStorage.getItem('selene_logged_in') === 'true';
-        if (wasLoggedIn) {
-          await handleLogout();
-        } else {
-          // Unauthenticated visitor on a protected route → send to login
+    if (inFlightSessionCheck) return inFlightSessionCheck;
+
+    inFlightSessionCheck = (async () => {
+      try {
+        let csrf = getCookie('csrf_token');
+        if (!csrf) {
+          try {
+            const csrfRes = await fetch('/api/auth/csrf', { credentials: 'include' });
+            const csrfData = await csrfRes.json();
+            if (csrfData && csrfData.csrf_token) csrf = csrfData.csrf_token;
+          } catch (_) {}
+          if (!csrf) csrf = getCookie('csrf_token');
+        }
+
+        const response = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': csrf || '' },
+          credentials: 'include'
+        });
+
+        // Bail if login/register happened while we were waiting
+        if (isAuthenticating.current) return;
+        const data = await response.json();
+        if (response.ok) {
+          setToken(data.token);
+          setUser(data.user);
+          setUsername(data.user.username);
+          localStorage.setItem('selene_logged_in', 'true');
+          localStorage.setItem('selene_token', data.token);
+          localStorage.setItem('selene_user', JSON.stringify(data.user));
+          localStorage.setItem('selene_username', data.user.username);
+          if (data.dek) {
+            sessionStorage.setItem('selene_dek', data.dek);
+          }
+          const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
+          const isSessionUnlocked = sessionStorage.getItem('selene_unlocked') === 'true';
+          setIsUnlocked(isSessionUnlocked || !camo);
+
+          // Restore the correct view for the current URL
           const path = window.location.pathname;
-          if (['/dashboard', '/calendar', '/settings'].includes(path)) {
-            setViewInternal('login');
-            window.history.replaceState({}, '', '/login');
+          const viewMap = { '/dashboard': 'dashboard', '/calendar': 'calendar', '/settings': 'settings', '/public-health': 'public-health' };
+          if (viewMap[path]) {
+            setViewInternal(viewMap[path]);
+          } else if (path === '/' || path === '') {
+            setViewInternal('dashboard');
+            window.history.replaceState({}, '', '/dashboard');
+          }
+        } else if (response.status === 401) {
+          const wasLoggedIn = localStorage.getItem('selene_logged_in') === 'true';
+          if (wasLoggedIn) {
+            await handleLogout();
+          } else {
+            // Unauthenticated visitor on a protected route → send to login
+            const path = window.location.pathname;
+            if (['/dashboard', '/calendar', '/settings'].includes(path)) {
+              setViewInternal('login');
+              window.history.replaceState({}, '', '/login');
+            }
           }
         }
+      } catch (e) {
+        console.error("Session check failed", e);
+      } finally {
+        inFlightSessionCheck = null;
       }
-    } catch (e) {
-      console.error("Session check failed", e);
-    }
+    })();
+
+    return inFlightSessionCheck;
   };
 
   useEffect(() => {
@@ -216,8 +263,10 @@ function App() {
     setToken(tokenVal || '');
     setUser(userVal || null);
     localStorage.setItem('selene_logged_in', 'true');
-    // const camo = localStorage.getItem('selene_camouflage_mode') === 'true';
-    // setIsUnlocked(!camo);
+    localStorage.setItem('selene_token', tokenVal || '');
+    localStorage.setItem('selene_user', JSON.stringify(userVal || {}));
+    localStorage.setItem('selene_username', name || 'user');
+    sessionStorage.setItem('selene_unlocked', 'true');
     setIsUnlocked(true);
     setView('dashboard');
     // Allow checkSession again after a brief window

@@ -24,7 +24,6 @@ const phases = [
     color: '#df9b6d', 
     bg: '#eed9c4', 
     textColor: '#362113',
-    calendarHighlight: [24, 25, 26, 27],
     prediction: "Based on your logs: Your body is restoring. Focus on warm nourishing foods, gentle movement, and extra rest."
   },
   { 
@@ -33,7 +32,6 @@ const phases = [
     color: '#8ca090', 
     bg: '#e2eae5', 
     textColor: '#1d2b20',
-    calendarHighlight: [5, 6, 7, 8, 9, 10, 11, 12],
     prediction: "Based on your logs: Estrogen is rising! Ideal phase for strength workouts, planning new projects, and creative brainstorming."
   },
   { 
@@ -42,7 +40,6 @@ const phases = [
     color: '#dfbe7e', 
     bg: '#f5eedc', 
     textColor: '#382c16',
-    calendarHighlight: [13, 14, 15],
     prediction: "Based on your logs: Estrogen and LH are peaking. Fertility is at its highest. Peak communication skills and social energy today."
   },
   { 
@@ -51,7 +48,6 @@ const phases = [
     color: '#9d8ea6', 
     bg: '#e8e2eb', 
     textColor: '#2a1f33',
-    calendarHighlight: [16, 17, 18, 19, 20, 21, 22, 23],
     prediction: "Based on your logs: Progesterone is dominant. Energy may naturally decrease. Great phase for nested organizing, reflection, and setting boundaries."
   }
 ];
@@ -63,14 +59,15 @@ const getCookie = (name) => {
   return '';
 };
 
-function getPredictedPhaseForDate(dateStr, prediction) {
+export function getPredictedPhaseForDate(dateStr, prediction) {
   if (!prediction || !prediction.next_period_date) return null;
   
   const targetDate = new Date(dateStr + 'T00:00:00');
   const nextPeriodDate = new Date(prediction.next_period_date + 'T00:00:00');
   
-  const cycleLength = prediction.cycle_length || 28;
-  const periodLength = prediction.period_length || 5;
+  const cycleLength = prediction.cycle_length_calculated || prediction.cycle_length || 28;
+  const periodLength = prediction.period_length_calculated || prediction.period_length || 5;
+  const ovulationDay = cycleLength - 14;
   
   const diffTime = targetDate - nextPeriodDate;
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
@@ -82,53 +79,59 @@ function getPredictedPhaseForDate(dateStr, prediction) {
   
   if (dayOfCycle < periodLength) {
     return 'menstrual';
-  } else if (dayOfCycle < 12) { 
+  } else if (dayOfCycle < ovulationDay - 1) { 
     return 'follicular';
-  } else if (dayOfCycle < 16) { 
+  } else if (dayOfCycle <= ovulationDay + 1) { 
     return 'ovulatory';
   } else { 
     return 'luteal';
   }
 }
 
-function estimatePhaseFromBaselines(dateStr, logs, user) {
-  if (!logs || logs.length === 0) return 'menstrual';
-  
-  // Find all menstrual dates, sorted ascending
-  const menstrualLogs = logs
-    .filter(l => l.phase === 'menstrual')
+export function estimatePhaseFromBaselines(dateStr, logs, user) {
+  const cycleLength = user?.cycle_length_baseline || 28;
+  const periodLength = user?.period_length_baseline || 5;
+  const ovulationDay = cycleLength - 14;
+  const targetDate = new Date(dateStr + 'T00:00:00');
+
+  // Find all menstrual dates (phase is menstrual or flow_intensity > 0)
+  const menstrualLogs = (logs || [])
+    .filter(l => l.phase === 'menstrual' || (l.flow_intensity !== null && l.flow_intensity !== undefined && Number(l.flow_intensity) > 0))
     .map(l => new Date(l.log_date + 'T00:00:00'))
     .sort((a, b) => a - b);
     
-  if (menstrualLogs.length === 0) return 'menstrual';
-  
-  // Find the period start dates (days where the previous day was not menstrual)
-  const periodStarts = [];
-  for (let i = 0; i < menstrualLogs.length; i++) {
-    if (i === 0) {
-      periodStarts.push(menstrualLogs[i]);
-    } else {
-      const diffDays = (menstrualLogs[i] - menstrualLogs[i-1]) / (1000 * 60 * 60 * 24);
-      if (diffDays > 1.5) {
+  let anchorDate;
+  if (menstrualLogs.length > 0) {
+    // Find period start dates (days where the previous day was not menstrual)
+    const periodStarts = [];
+    for (let i = 0; i < menstrualLogs.length; i++) {
+      if (i === 0) {
         periodStarts.push(menstrualLogs[i]);
+      } else {
+        const diffDays = (menstrualLogs[i] - menstrualLogs[i-1]) / (1000 * 60 * 60 * 24);
+        if (diffDays > 1.5) {
+          periodStarts.push(menstrualLogs[i]);
+        }
       }
     }
+    const pastStarts = periodStarts.filter(d => d <= targetDate);
+    anchorDate = pastStarts.length > 0 ? pastStarts[pastStarts.length - 1] : periodStarts[0];
+  } else if (logs && logs.length > 0) {
+    // If user logged symptoms but hasn't recorded period start yet,
+    // anchor cycle to periodLength days before their earliest logged day
+    const sortedLogs = [...logs].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+    anchorDate = new Date(sortedLogs[0].log_date + 'T00:00:00');
+    anchorDate.setDate(anchorDate.getDate() - periodLength);
+  } else {
+    // Fallback anchor: 14 days before today
+    const now = new Date();
+    anchorDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    anchorDate.setDate(anchorDate.getDate() - 14);
   }
-  
-  // Find the last period start date before or equal to targetDate
-  const targetDate = new Date(dateStr + 'T00:00:00');
-  const pastStarts = periodStarts.filter(d => d <= targetDate);
-  if (pastStarts.length === 0) {
-    return 'menstrual';
-  }
-  
-  const lastStart = pastStarts[pastStarts.length - 1];
-  const cycleLength = user?.cycle_length_baseline || 28;
-  const periodLength = user?.period_length_baseline || 5;
-  
-  const diffDays = Math.floor((targetDate - lastStart) / (1000 * 60 * 60 * 24));
-  const daysInCycle = diffDays % cycleLength;
-  const ovulationDay = cycleLength - 14;
+
+  const diffDays = Math.floor((targetDate - anchorDate) / (1000 * 60 * 60 * 24));
+  let daysInCycle = diffDays % cycleLength;
+  if (daysInCycle < 0) daysInCycle += cycleLength;
   
   if (daysInCycle < periodLength) {
     return 'menstrual';
@@ -141,15 +144,16 @@ function estimatePhaseFromBaselines(dateStr, logs, user) {
   }
 }
 
-function getFallbackDaysUntilNextCycle(dateStr, logs, user) {
-  if (!logs || logs.length === 0) return user?.cycle_length_baseline || 28;
+export function getFallbackDaysUntilNextCycle(dateStr, logs, user) {
+  const cycleLength = user?.cycle_length_baseline || 28;
+  if (!logs || logs.length === 0) return cycleLength;
   
   const menstrualLogs = logs
-    .filter(l => l.phase === 'menstrual')
+    .filter(l => l.phase === 'menstrual' || (l.flow_intensity !== null && l.flow_intensity !== undefined && Number(l.flow_intensity) > 0))
     .map(l => new Date(l.log_date + 'T00:00:00'))
     .sort((a, b) => a - b);
     
-  if (menstrualLogs.length === 0) return user?.cycle_length_baseline || 28;
+  if (menstrualLogs.length === 0) return cycleLength;
   
   const periodStarts = [];
   for (let i = 0; i < menstrualLogs.length; i++) {
@@ -166,18 +170,31 @@ function getFallbackDaysUntilNextCycle(dateStr, logs, user) {
   const targetDate = new Date(dateStr + 'T00:00:00');
   const pastStarts = periodStarts.filter(d => d <= targetDate);
   if (pastStarts.length === 0) {
-    return user?.cycle_length_baseline || 28;
+    return cycleLength;
   }
   
   const lastStart = pastStarts[pastStarts.length - 1];
-  const cycleLength = user?.cycle_length_baseline || 28;
-  
   const diffDays = Math.floor((targetDate - lastStart) / (1000 * 60 * 60 * 24));
   const daysInCycle = diffDays % cycleLength;
   
   const remaining = cycleLength - daysInCycle;
   return remaining > 0 ? remaining : cycleLength;
 }
+
+export function getPhaseForCalendarDay(dateStr, logs, prediction, user) {
+  if (Array.isArray(logs)) {
+    const directLog = logs.find(l => l.log_date === dateStr);
+    if (directLog && directLog.phase) {
+      return directLog.phase;
+    }
+  }
+  if (prediction && prediction.next_period_date) {
+    const predPhase = getPredictedPhaseForDate(dateStr, prediction);
+    if (predPhase) return predPhase;
+  }
+  return estimatePhaseFromBaselines(dateStr, logs, user);
+}
+
 
 export default function Dashboard({ username = 'user', setView, token, user, onLogout, selectedDate, setSelectedDate, showToast }) {
   const [activePhase, setActivePhase] = useState('menstrual');
@@ -248,7 +265,7 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
     setLutealSleep(55);
   };
 
-  const fetchLogsData = async () => {
+  const fetchLogsData = async (predictionOverride) => {
     if (!token || !selectedDate) return;
     setIsLoading(true);
     setFetchError(null);
@@ -282,9 +299,9 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
         setAllLogs(processedLogs);
         const logForDay = processedLogs.find(l => l.log_date === selectedDate);
         if (logForDay) {
-          setActivePhase(logForDay.phase || 'menstrual');
+          setActivePhase(logForDay.phase || 'follicular');
           setBbtInput(logForDay.basal_body_temp !== null ? String(logForDay.basal_body_temp) : '');
-          const phaseStr = logForDay.phase || 'menstrual';
+          const phaseStr = logForDay.phase || 'follicular';
           if (phaseStr === 'menstrual') {
             setMenstrualSliders({
               flow: logForDay.flow_intensity !== null ? logForDay.flow_intensity : 50,
@@ -340,18 +357,26 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
           }
         } else {
           resetSymptomStates();
-          // Automatically set active phase based on predicted next period date
-          if (apiPrediction && apiPrediction.next_period_date) {
-            const predPhase = getPredictedPhaseForDate(selectedDate, apiPrediction);
-            if (predPhase) setActivePhase(predPhase);
+          // Automatically set active phase based on predicted next period date or baseline calculation
+          const effectivePrediction = predictionOverride !== undefined ? predictionOverride : apiPrediction;
+          if (effectivePrediction && effectivePrediction.next_period_date) {
+            const predPhase = getPredictedPhaseForDate(selectedDate, effectivePrediction);
+            if (predPhase) {
+              setActivePhase(predPhase);
+            } else {
+              setActivePhase(estimatePhaseFromBaselines(selectedDate, processedLogs, user));
+            }
+          } else if (effectivePrediction && effectivePrediction.estimated_phase && effectivePrediction.estimated_phase !== 'calibrating' && effectivePrediction.estimated_phase !== 'Calibrating') {
+            setActivePhase(effectivePrediction.estimated_phase);
           } else {
-            const fallbackPhase = estimatePhaseFromBaselines(selectedDate, data.logs, user);
+            const fallbackPhase = estimatePhaseFromBaselines(selectedDate, processedLogs, user);
             setActivePhase(fallbackPhase);
           }
         }
       } else {
         setFetchError(data.error || "Failed to load logs.");
       }
+
     } catch (e) {
       console.error(e);
       setFetchError("Network connection failure.");
@@ -466,6 +491,7 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
   useEffect(() => {
     const loadCycleAndPredict = async () => {
       if (!token) return;
+      let currentPrediction = null;
       try {
         const predResponse = await fetch(`/api/predict/next-cycle?date=${selectedDate}`, {
           headers: {
@@ -475,6 +501,7 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
         if (predResponse.ok) {
           const predData = await predResponse.json();
           if (predData && predData.prediction) {
+            currentPrediction = predData.prediction;
             setApiPrediction(predData.prediction);
           }
         }
@@ -494,12 +521,125 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
         console.error("Failed to load predictions/insights", e);
       }
       
-      // Load logs
-      fetchLogsData();
+      // Load logs with fresh prediction override
+      fetchLogsData(currentPrediction);
     };
     
     loadCycleAndPredict();
   }, [selectedDate, token]);
+
+  const handleStartPeriodToday = async () => {
+    setActivePhase('menstrual');
+    setMenstrualSliders(prev => ({ ...prev, flow: prev.flow || 50 }));
+    showToast("Period started! Switched to Menstrual phase. 🩸", "info");
+    
+    const payload = {
+      log_date: selectedDate,
+      phase: 'menstrual',
+      flow_intensity: menstrualSliders.flow || 50,
+      pelvic_pain: menstrualSliders.cramps || 30,
+      energy_level: menstrualSliders.energy || 40,
+      back_pain: menstrualSliders.pain || 25,
+      sleep_quality: menstrualSleep || 60,
+      mood_toggles: menstrualMoods,
+      symptom_tags: menstrualSymptoms,
+      lifestyle_actions: { meds: menstrualMeds }
+    };
+
+    const dek = sessionStorage.getItem('selene_dek');
+    let syncPayload = { ...payload };
+    if (dek) {
+      try {
+        const encrypted = await encryptData(JSON.stringify(payload), dek);
+        syncPayload = {
+          log_date: payload.log_date,
+          phase: payload.phase,
+          encrypted_data: encrypted
+        };
+      } catch (err) {
+        console.error("Encryption error:", err);
+      }
+    }
+
+    if (token && isOnline) {
+      setIsSyncing(true);
+      try {
+        const response = await fetch('/api/logs/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-CSRF-Token': getCookie('csrf_token')
+          },
+          body: JSON.stringify(syncPayload)
+        });
+        if (response.ok) {
+          showToast("Period start logged & cycle updated! 🩸", "success");
+          fetchLogsData();
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+  };
+
+  const handleEndPeriodToday = async () => {
+    setActivePhase('follicular');
+    showToast("Period ended! Switched to Follicular phase. 🌿", "info");
+    
+    const payload = {
+      log_date: selectedDate,
+      phase: 'follicular',
+      flow_intensity: follicularSliders.focus || 80,
+      pelvic_pain: follicularSliders.strength || 75,
+      energy_level: follicularSliders.energy || 80,
+      back_pain: follicularSliders.glow || 70,
+      sleep_quality: follicularSleep || 75,
+      mood_toggles: follicularMoods,
+      symptom_tags: follicularSymptoms,
+      lifestyle_actions: { meds: follicularMeds }
+    };
+
+    const dek = sessionStorage.getItem('selene_dek');
+    let syncPayload = { ...payload };
+    if (dek) {
+      try {
+        const encrypted = await encryptData(JSON.stringify(payload), dek);
+        syncPayload = {
+          log_date: payload.log_date,
+          phase: payload.phase,
+          encrypted_data: encrypted
+        };
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    if (token && isOnline) {
+      setIsSyncing(true);
+      try {
+        const response = await fetch('/api/logs/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-CSRF-Token': getCookie('csrf_token')
+          },
+          body: JSON.stringify(syncPayload)
+        });
+        if (response.ok) {
+          showToast("Transitioned to Follicular phase! 🌿", "success");
+          fetchLogsData();
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+  };
 
   const handleSaveLog = async () => {
     if (!token) {
@@ -624,16 +764,19 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
     if (activePhase === 'luteal') setLutealSymptoms(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleToggleMed = (idx) => {
-    const update = (prev) => {
-      const copy = [...prev];
-      copy[idx] = !copy[idx];
-      return copy;
-    };
-    if (activePhase === 'menstrual') setMenstrualMeds(update);
-    if (activePhase === 'follicular') setFollicularMeds(update);
-    if (activePhase === 'ovulatory') setOvulatoryMeds(update);
-    if (activePhase === 'luteal') setLutealMeds(update);
+  const handleToggleMed = (index) => {
+    let currentMeds = [];
+    if (activePhase === 'menstrual') currentMeds = [...menstrualMeds];
+    if (activePhase === 'follicular') currentMeds = [...follicularMeds];
+    if (activePhase === 'ovulatory') currentMeds = [...ovulatoryMeds];
+    if (activePhase === 'luteal') currentMeds = [...lutealMeds];
+
+    currentMeds[index] = !currentMeds[index];
+
+    if (activePhase === 'menstrual') setMenstrualMeds(currentMeds);
+    if (activePhase === 'follicular') setFollicularMeds(currentMeds);
+    if (activePhase === 'ovulatory') setOvulatoryMeds(currentMeds);
+    if (activePhase === 'luteal') setLutealMeds(currentMeds);
   };
 
   const getCurrentCycleLogs = () => {
@@ -779,6 +922,53 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
                 phases={phases}
               />
 
+              {/* Front Screen "Did You Start Menstruating Today?" Prompt */}
+              <div className="bg-white/80 backdrop-blur-md rounded-[2.5rem] p-6 sm:p-8 shadow-xl border border-[var(--color-selene-brown)]/20 flex flex-col md:flex-row items-center justify-between gap-6 transition-all duration-300">
+                <div className="flex items-center gap-4 text-left">
+                  <div className="w-14 h-14 rounded-2xl bg-[#df9b6d]/20 flex items-center justify-center text-3xl shrink-0">
+                    🩸
+                  </div>
+                  <div>
+                    <h3 className="font-handwriting text-3xl sm:text-4xl font-bold text-[#362113]">
+                      Did you start menstruating today?
+                    </h3>
+                    <p className="font-sans text-xs sm:text-sm text-[#362113]/70 mt-1">
+                      {activePhase === 'menstrual' 
+                        ? `Period logging active for ${new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}. Update symptoms below or mark period ended.`
+                        : `Tap below if your period started on ${new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} to update your cycle predictions.`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 shrink-0">
+                  {activePhase !== 'menstrual' ? (
+                    <motion.button
+                      whileHover={{ scale: 1.03 }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={handleStartPeriodToday}
+                      className="px-6 py-3 rounded-full bg-[#df9b6d] text-[#362113] font-handwriting text-2xl font-bold shadow-md hover:bg-[#d68f60] transition-colors flex items-center gap-2 cursor-pointer border border-[#df9b6d]/40"
+                    >
+                      <span>🩸 Yes, Period Started Today</span>
+                    </motion.button>
+                  ) : (
+                    <>
+                      <div className="px-5 py-2.5 rounded-full bg-[#df9b6d]/20 text-[#362113] font-sans text-xs font-bold uppercase tracking-wider flex items-center gap-2 border border-[#df9b6d]/30">
+                        <span className="w-2.5 h-2.5 rounded-full bg-[#df9b6d] animate-pulse" />
+                        Menstrual Phase Active
+                      </div>
+                      <motion.button
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={handleEndPeriodToday}
+                        className="px-5 py-2.5 rounded-full bg-[#8ca090] text-[#1d2b20] font-handwriting text-xl font-bold shadow-sm hover:bg-[#7b907f] transition-colors cursor-pointer"
+                      >
+                        Period Ended (Move to Follicular)
+                      </motion.button>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {/* Row 1: Phase Circle & Mini Calendar */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-stretch">
                 <PhaseCircle currentPhaseConfig={currentPhaseConfig} />
@@ -807,37 +997,35 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
                       <div key={i} className="text-white/40 font-bold text-xs uppercase">{d}</div>
                     ))}
                     
-                    {Array.from({ length: 5 }).map((_, i) => (
+                    {/* Dynamic empty leading cells for month */}
+                    {Array.from({ length: new Date(new Date(selectedDate + 'T00:00:00').getFullYear(), new Date(selectedDate + 'T00:00:00').getMonth(), 1).getDay() }).map((_, i) => (
                       <div key={`empty-${i}`} />
                     ))}
 
-                    {Array.from({ length: 31 }).map((_, i) => {
+                    {/* Dynamic days in month */}
+                    {Array.from({ length: new Date(new Date(selectedDate + 'T00:00:00').getFullYear(), new Date(selectedDate + 'T00:00:00').getMonth() + 1, 0).getDate() }).map((_, i) => {
                       const day = i + 1;
-                      const isHighlight = currentPhaseConfig.calendarHighlight.includes(day);
-                      const targetDate = new Date(selectedDate + 'T00:00:00');
-                      const isSelectedDay = day === targetDate.getDate();
+                      const monthObj = new Date(selectedDate + 'T00:00:00');
+                      const dayStr = `${monthObj.getFullYear()}-${String(monthObj.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                      const dayPhase = getPhaseForCalendarDay(dayStr, allLogs, apiPrediction, user);
+                      const phaseObj = phases.find(p => p.id === dayPhase);
+                      const isCurrentActive = dayPhase === currentPhaseConfig.id;
+                      const isSelectedDay = day === monthObj.getDate();
 
                       return (
                         <div key={day} className="relative flex items-center justify-center h-8 w-8 mx-auto">
-                          {isHighlight && (
-                            <motion.div 
-                              initial={{ scale: 0.8 }}
-                              animate={{ scale: 1 }}
-                              className="absolute inset-0 rounded-xl flex items-center justify-center opacity-85"
-                              style={{ backgroundColor: currentPhaseConfig.color }}
-                            >
-                              <svg viewBox="0 0 24 24" className="w-4 h-4 text-[#1e2722]" fill="currentColor">
-                                <path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z" />
-                              </svg>
-                            </motion.div>
+                          {phaseObj && (
+                            <div 
+                              className={`absolute inset-0 rounded-xl transition-all ${isCurrentActive ? 'opacity-90 shadow-xs' : 'opacity-45'}`}
+                              style={{ backgroundColor: phaseObj.color }}
+                            />
                           )}
                           {isSelectedDay && (
                             <div 
-                              className="absolute inset-0 border-2 border-dashed rounded-xl"
-                              style={{ borderColor: currentPhaseConfig.color }}
+                              className="absolute inset-0 border-2 border-white rounded-xl shadow-sm z-10"
                             />
                           )}
-                          <span className={`relative z-10 font-bold ${isHighlight ? 'text-[#1e2722]' : 'text-white'}`}>
+                          <span className={`relative z-10 text-xs font-bold ${phaseObj ? 'text-[#1e2722]' : 'text-white/70'}`}>
                             {day}
                           </span>
                         </div>
@@ -896,32 +1084,45 @@ export default function Dashboard({ username = 'user', setView, token, user, onL
 
               <hr className="border-black/5" />
 
-              {/* Row 3: Phase Select */}
-              <div className="flex flex-col gap-6 text-center">
-                <span className="font-sans text-black text-xl font-bold tracking-widest uppercase">
-                  Current Tracking Phase:
-                </span>
-                <div className="flex flex-wrap justify-center gap-3">
-                  {phases.map((p) => (
-                    <motion.button
-                      key={p.id}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => setActivePhase(p.id)}
-                      className={`font-handwriting text-2xl px-6 py-2 rounded-full border shadow-sm transition-all duration-300 cursor-pointer focus:outline-none ${
-                        activePhase === p.id 
-                          ? 'border-transparent font-bold' 
-                          : 'bg-white/40 border-black/5 hover:bg-white/70 text-black/60'
-                      }`}
-                      style={{ 
-                        backgroundColor: activePhase === p.id ? p.color : undefined,
-                        color: activePhase === p.id ? '#1e2722' : undefined
-                      }}
-                    >
-                      {p.name}
-                    </motion.button>
-                  ))}
+              {/* Row 3: Frozen Phase Status */}
+              <div className="flex flex-col gap-4 text-center bg-white/40 backdrop-blur-sm rounded-[2.5rem] p-8 border border-black/5 shadow-sm">
+                <div className="flex items-center justify-center gap-2">
+                  <span className="font-sans text-black text-xs font-bold tracking-widest uppercase">
+                    Biological Phase Tracking
+                  </span>
+                  <span className="bg-black/10 text-black/70 text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                    <span>🔒</span> Buttons Frozen
+                  </span>
                 </div>
+
+                <div className="flex flex-wrap justify-center gap-3">
+                  {phases.map((p) => {
+                    const isCurrent = activePhase === p.id;
+                    return (
+                      <div key={p.id} className="relative group">
+                        <button
+                          disabled={!isCurrent}
+                          className={`font-handwriting text-2xl px-6 py-2.5 rounded-full border transition-all duration-300 flex items-center gap-2 ${
+                            isCurrent 
+                              ? 'border-transparent font-bold shadow-md cursor-default scale-105' 
+                              : 'bg-black/5 border-black/5 text-black/40 opacity-40 cursor-not-allowed filter grayscale'
+                          }`}
+                          style={{ 
+                            backgroundColor: isCurrent ? p.color : undefined,
+                            color: isCurrent ? '#1e2722' : undefined
+                          }}
+                        >
+                          {isCurrent && <span className="text-sm">🔒</span>}
+                          <span>{p.name}</span>
+                          {!isCurrent && <span className="text-xs opacity-60">(Frozen)</span>}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="font-sans text-xs text-black/50 max-w-md mx-auto italic">
+                  Phase buttons are frozen to your active biological phase ({currentPhaseConfig.name}). To start a new period, tap <strong>"Yes, Period Started Today"</strong> on the front screen above.
+                </p>
               </div>
 
               <hr className="border-black/5" />

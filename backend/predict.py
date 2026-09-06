@@ -104,18 +104,6 @@ def predict_next_cycle():
         # 1. Preprocess raw tracking logs into a cleansed DataFrame
         df = extract_log_dataframe(user.id)
         
-        # 2. Data Safeguard check: Requires at least 10 log entries to calibrate baselines
-        if df.empty or len(df) < 10:
-            return jsonify({
-                "status": "calibrating",
-                "message": f"Selene is currently calibrating. You have logged {len(df)}/10 days of indicators. Please log at least 10 entries to enable adaptive tracking.",
-                "prediction": {
-                    "next_period_date": None,
-                    "estimated_phase": "Calibrating",
-                    "insight": "Every log helps build a safer, more accurate calibration picture of your unique rhythm. Keep tracking daily indicators."
-                }
-            }), 200
-
         # Optional date query parameter for testing
         test_date_str = request.args.get('date')
         if test_date_str:
@@ -125,6 +113,64 @@ def predict_next_cycle():
                 raise MLPipelineError("Invalid 'date' query parameter format. Use YYYY-MM-DD.", 400)
         else:
             reference_date = datetime.now().date()
+
+        # 2. Data Safeguard check: If fewer than 10 log entries, provide mathematical baseline estimates
+        if df.empty or len(df) < 10:
+            baseline_cycle = user.cycle_length_baseline or 28
+            baseline_period = user.period_length_baseline or 5
+            
+            # Identify any period starts in logged data
+            period_starts = []
+            if not df.empty and 'phase' in df.columns:
+                for i in range(len(df)):
+                    if df.loc[i, 'phase'] == 'menstrual':
+                        if i == 0 or df.loc[i-1, 'phase'] != 'menstrual':
+                            period_starts.append(df.loc[i, 'log_date'].date())
+            
+            if period_starts:
+                last_period_start = period_starts[-1]
+                next_period_date = last_period_start + timedelta(days=baseline_cycle)
+                while next_period_date <= reference_date:
+                    next_period_date += timedelta(days=baseline_cycle)
+                
+                days_since_start = (reference_date - last_period_start).days
+                days_in_cycle = days_since_start % baseline_cycle
+                ovulation_day = baseline_cycle - 14
+                
+                if days_in_cycle < baseline_period:
+                    current_phase_est = 'menstrual'
+                elif days_in_cycle < ovulation_day - 1:
+                    current_phase_est = 'follicular'
+                elif days_in_cycle <= ovulation_day + 1:
+                    current_phase_est = 'ovulatory'
+                else:
+                    current_phase_est = 'luteal'
+                
+                next_period_str = next_period_date.isoformat()
+                days_until = (next_period_date - reference_date).days
+            else:
+                current_phase_est = 'follicular'
+                next_period_str = None
+                days_until = baseline_cycle
+
+            insight = get_empathetic_insight(current_phase_est, user)
+            disclaimer_text = "MEDICAL DISCLAIMER: Selene is an educational tracking tool. It does not provide clinical diagnoses, medical treatments, or formal recommendations. Consult a licensed healthcare provider for medical concerns."
+
+            return jsonify({
+                "status": "calibrating",
+                "message": f"Selene is currently calibrating. You have recorded {len(df)}/10 total entries in your history. Please log {10 - len(df)} more entries to enable adaptive ML tracking.",
+                "prediction": {
+                    "next_period_date": next_period_str,
+                    "estimated_phase": current_phase_est,
+                    "days_until_period": days_until,
+                    "cycle_length_calculated": baseline_cycle,
+                    "period_length_calculated": baseline_period,
+                    "prediction_error_std": 3.0,
+                    "prediction_error_bounds": "±3.0 days",
+                    "insight": insight,
+                    "medical_disclaimer": disclaimer_text
+                }
+            }), 200
 
         # 3. Model Inference Check: Use in-memory cached scikit-learn binary
         predicted_cycle_length = None

@@ -224,7 +224,19 @@ def get_csrf_token():
     GET-safe endpoint that seeds the csrf_token cookie via the after_request hook.
     Call this once on app boot before any mutating requests.
     """
-    return jsonify({"status": "ok"}), 200
+    token = request.cookies.get('csrf_token')
+    if not token:
+        import secrets
+        token = secrets.token_hex(16)
+    resp = make_response(jsonify({"status": "ok", "csrf_token": token}), 200)
+    resp.set_cookie(
+        'csrf_token',
+        token,
+        samesite='Strict',
+        secure=current_app.config.get('SESSION_COOKIE_SECURE', True),
+        httponly=False
+    )
+    return resp
 
 
 @auth_bp.route('/register', methods=['POST'])
@@ -497,16 +509,58 @@ def login():
     return response
 
 
+# Grace period cache for refresh token rotation:
+# token_hash -> { "access_token": ..., "refresh_token": ..., "user_dict": ..., "dek": ..., "expires_at": ... }
+_refresh_grace_cache = {}
+
+def clean_refresh_grace_cache():
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    expired_keys = [k for k, v in _refresh_grace_cache.items() if v['expires_at'] < now]
+    for k in expired_keys:
+        _refresh_grace_cache.pop(k, None)
+
 @auth_bp.route('/refresh', methods=['POST'])
 def refresh():
     """
     Exchange a valid refresh token for a new access token and rotate the refresh token.
+    Supports a grace period to prevent concurrent requests (e.g. React StrictMode)
+    from invalidating valid sessions.
     """
+    clean_refresh_grace_cache()
     refresh_token = request.cookies.get('refresh_token')
     
     if not refresh_token:
         return jsonify({"error": "Refresh token not found"}), 401
     
+    token_h = hash_token(refresh_token)
+    
+    # Check grace period cache first (handles double-mount / concurrent requests)
+    if token_h in _refresh_grace_cache:
+        cached = _refresh_grace_cache[token_h]
+        response = make_response(jsonify({
+            "status": "success",
+            "token": cached["access_token"],
+            "user": cached["user_dict"],
+            "dek": cached["dek"]
+        }), 200)
+        response.set_cookie(
+            'access_token',
+            cached["access_token"],
+            httponly=True,
+            samesite='Strict',
+            secure=current_app.config.get('SESSION_COOKIE_SECURE', True),
+            max_age=ACCESS_TOKEN_EXPIRY_MINUTES * 60
+        )
+        response.set_cookie(
+            'refresh_token',
+            cached["refresh_token"],
+            httponly=True,
+            samesite='Strict',
+            secure=current_app.config.get('SESSION_COOKIE_SECURE', True),
+            max_age=REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60
+        )
+        return response
+
     authenticated_user = verify_refresh_token(refresh_token)
     
     if not authenticated_user:
@@ -534,10 +588,21 @@ def refresh():
     authenticated_user.refresh_token_hash = hash_token(new_refresh_token)
     db.session.commit()
     
+    # Store in grace period cache for 30 seconds
+    now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    _refresh_grace_cache[token_h] = {
+        "access_token": access_token,
+        "refresh_token": new_refresh_token,
+        "user_dict": authenticated_user.to_dict(),
+        "dek": dek,
+        "expires_at": now_ts + 30
+    }
+    
     response = make_response(jsonify({
         "status": "success",
         "token": access_token,
-        "user": authenticated_user.to_dict()
+        "user": authenticated_user.to_dict(),
+        "dek": dek
     }), 200)
     
     response.set_cookie(
